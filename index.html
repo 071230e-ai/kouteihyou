@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>村田鉄筋㈱ 年間工程表</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ============================================================
+     アプリヘッダー（画面上部 / 印刷非表示）
+     ============================================================ -->
+<header class="app-header no-print">
+  <div class="header-left">
+    <div class="app-title">
+      <span class="company-name">村田鉄筋㈱</span>
+      <span class="app-name">年間工程表</span>
+    </div>
+    <div class="year-nav">
+      <button class="icon-btn" id="prevYear" title="前年度">◀</button>
+      <span class="year-label" id="yearDisplay">2025年度</span>
+      <button class="icon-btn" id="nextYear" title="次年度">▶</button>
+      <label class="start-month-label">開始月
+        <select id="startMonth" class="hdr-select">
+          <option value="1">1月</option><option value="2">2月</option>
+          <option value="3">3月</option><option value="4" selected>4月</option>
+          <option value="5">5月</option><option value="6">6月</option>
+          <option value="7">7月</option><option value="8">8月</option>
+          <option value="9">9月</option><option value="10">10月</option>
+          <option value="11">11月</option><option value="12">12月</option>
+        </select>
+      </label>
+    </div>
+  </div>
+
+  <div class="header-right">
+    <div class="filter-row">
+      <input  type="text"   id="searchInput"   class="hdr-input" placeholder="🔍 現場名・工事内容を検索">
+      <select id="filterTanto"   class="hdr-select"><option value="">担当：全員</option></select>
+      <select id="filterZairyou" class="hdr-select"><option value="">材料：全て</option></select>
+      <select id="filterStatus"  class="hdr-select">
+        <option value="">状態：全て</option>
+        <option value="未着手">未着手</option>
+        <option value="施工中">施工中</option>
+        <option value="完了">完了</option>
+        <option value="注意">注意</option>
+        <option value="遅れ">遅れ</option>
+        <option value="未確定">未確定</option>
+      </select>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-add"    id="addSiteBtn">＋ 現場追加</button>
+      <button class="btn btn-tool"   id="importCsvBtn">📥 CSV読込</button>
+      <button class="btn btn-tool"   id="exportCsvBtn">📤 CSV出力</button>
+      <button class="btn btn-print"  id="exportPdfBtn">🖨 PDF出力</button>
+      <button class="btn btn-print"  id="printBtn">🖨 印刷</button>
+    </div>
+  </div>
+</header>
+
+<!-- ============================================================
+     印刷ヘッダー（印刷時のみ表示）
+     ============================================================ -->
+<div class="print-header print-only">
+  <div class="print-title" id="printTitle">2025年度　村田鉄筋株式会社　年間工程表</div>
+  <div class="print-date"  id="printDate">作成日：2025/5/2</div>
+</div>
+
+<!-- ============================================================
+     凡例バー＋統計
+     ============================================================ -->
+<div class="legend-bar no-print">
+  <div class="legend-items">
+    <span class="legend-item"><span class="leg-color leg-normal"></span>施工中／未着手</span>
+    <span class="legend-item"><span class="leg-color leg-complete"></span>完了</span>
+    <span class="legend-item"><span class="leg-color leg-caution"></span>注意</span>
+    <span class="legend-item"><span class="leg-color leg-delay"></span>遅れ</span>
+    <span class="legend-item"><span class="leg-color leg-uncertain"></span>未確定（破線）</span>
+    <span class="legend-item"><span class="leg-color leg-possible"></span>受注可能性（破線）</span>
+    <span class="legend-sep">|</span>
+    <span class="legend-item"><span class="leg-cell leg-yellow"></span>黄背景</span>
+    <span class="legend-item"><span class="leg-cell leg-green"></span>緑背景</span>
+  </div>
+  <div class="stats-bar" id="statsBar">
+    <!-- JS で描画 -->
+  </div>
+  <div class="today-legend" id="todayLegend">📅 今日：<span id="todayDateLabel"></span></div>
+</div>
+
+<!-- ============================================================
+     メインガントチャートエリア
+     ============================================================ -->
+<div class="gantt-outer" id="ganttOuter">
+
+  <!-- 左固定パネル -->
+  <div class="left-panel" id="leftPanel">
+    <table class="gtable left-table" id="leftTable">
+      <thead>
+        <tr class="lhdr-top">
+          <th class="c-no">No</th>
+          <th class="c-name">現場名・工事内容</th>
+          <th class="c-tanto">担当</th>
+          <th class="c-kubun">区分</th>
+          <th class="c-qty">数量</th>
+          <th class="c-mat">材料区分</th>
+          <th class="c-shik">支給</th>
+          <th class="c-zk">材工</th>
+        </tr>
+      </thead>
+      <tbody id="leftBody"></tbody>
+    </table>
+  </div>
+
+  <!-- 右スクロールパネル -->
+  <div class="right-panel" id="rightPanel">
+    <div class="right-inner" id="rightInner">
+      <!-- ガントヘッダー（スティッキー） -->
+      <div class="gantt-header" id="ganttHeader">
+        <div class="gh-months" id="ghMonths"></div>
+        <div class="gh-weeks"  id="ghWeeks"></div>
+      </div>
+      <!-- ガントボディ -->
+      <div class="gantt-body" id="ganttBody"></div>
+    </div>
+  </div>
+
+</div><!-- /gantt-outer -->
+
+<!-- ============================================================
+     現場追加・編集モーダル
+     ============================================================ -->
+<div class="overlay" id="siteOverlay">
+  <div class="modal" id="siteModal">
+    <div class="modal-hdr">
+      <h2 id="modalTitle">現場追加</h2>
+      <button class="modal-x" id="modalClose">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="fgrid">
+
+        <div class="fg full">
+          <label>現場名 <em>*</em></label>
+          <input type="text" id="f_name" class="fi" placeholder="例：○○ビル新築工事">
+        </div>
+        <div class="fg full">
+          <label>工事内容</label>
+          <input type="text" id="f_content" class="fi" placeholder="例：鉄筋工事一式">
+        </div>
+
+        <div class="fg">
+          <label>元請会社</label>
+          <input type="text" id="f_motouke" class="fi" placeholder="例：○○建設㈱">
+        </div>
+        <div class="fg">
+          <label>所在地</label>
+          <input type="text" id="f_address" class="fi" placeholder="例：大阪府○○市">
+        </div>
+
+        <div class="fg">
+          <label>担当者</label>
+          <input type="text" id="f_tanto" class="fi" placeholder="例：村田">
+        </div>
+        <div class="fg">
+          <label>区分</label>
+          <select id="f_kubun" class="fi">
+            <option value="">-</option>
+            <option value="新築">新築</option><option value="改修">改修</option>
+            <option value="増築">増築</option><option value="解体">解体</option>
+            <option value="その他">その他</option>
+          </select>
+        </div>
+
+        <div class="fg">
+          <label>数量</label>
+          <div class="fi-row">
+            <input type="number" id="f_qty" class="fi" style="width:90px" placeholder="0">
+            <select id="f_unit" class="fi" style="width:72px">
+              <option value="t">t</option><option value="kg">kg</option>
+              <option value="式">式</option><option value="m2">m²</option>
+              <option value="m3">m³</option><option value="本">本</option>
+            </select>
+          </div>
+        </div>
+        <div class="fg">
+          <label>材料区分</label>
+          <select id="f_zairyou" class="fi">
+            <option value="">-</option>
+            <option value="SD345">SD345</option><option value="SD390">SD390</option>
+            <option value="SD295">SD295</option><option value="混合">混合</option>
+            <option value="その他">その他</option>
+          </select>
+        </div>
+
+        <div class="fg">
+          <label>支給</label>
+          <select id="f_shikyuu" class="fi">
+            <option value="">-</option>
+            <option value="支給">支給</option><option value="支給外">支給外</option>
+          </select>
+        </div>
+        <div class="fg">
+          <label>材工</label>
+          <select id="f_zaikou" class="fi">
+            <option value="">-</option>
+            <option value="材工">材工</option><option value="労務">労務</option>
+            <option value="材料">材料</option>
+          </select>
+        </div>
+
+        <div class="fg">
+          <label>工程開始日 <em>*</em></label>
+          <input type="date" id="f_start" class="fi">
+        </div>
+        <div class="fg">
+          <label>工程終了予定日 <em>*</em></label>
+          <input type="date" id="f_end" class="fi">
+        </div>
+
+        <div class="fg">
+          <label>実際の終了日</label>
+          <input type="date" id="f_actual" class="fi">
+        </div>
+        <div class="fg">
+          <label>ステータス</label>
+          <select id="f_status" class="fi">
+            <option value="未着手">未着手</option>
+            <option value="施工中">施工中</option>
+            <option value="完了">完了</option>
+            <option value="注意">注意</option>
+            <option value="遅れ">遅れ</option>
+            <option value="未確定">未確定</option>
+          </select>
+        </div>
+
+        <div class="fg">
+          <label>受注区分</label>
+          <select id="f_juchu" class="fi">
+            <option value="受注済">受注済み</option>
+            <option value="可能性あり">受注の可能性あり</option>
+          </select>
+        </div>
+        <div class="fg">
+          <label>セル背景色</label>
+          <select id="f_color" class="fi">
+            <option value="white">白（標準）</option>
+            <option value="yellow">黄色</option>
+            <option value="green">緑</option>
+          </select>
+        </div>
+
+        <div class="fg full">
+          <label>工程メモ（バー上に表示）</label>
+          <input type="text" id="f_memo" class="fi" placeholder="例：搬入は北側から">
+        </div>
+        <div class="fg full">
+          <label>備考</label>
+          <textarea id="f_biko" class="fi" rows="2" placeholder="自由記入欄"></textarea>
+        </div>
+
+      </div><!-- /fgrid -->
+    </div>
+    <div class="modal-ftr">
+      <button class="btn btn-cancel" id="modalCancel">キャンセル</button>
+      <button class="btn btn-save"   id="modalSave">💾 保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
+     削除確認モーダル
+     ============================================================ -->
+<div class="overlay" id="delOverlay">
+  <div class="modal modal-sm">
+    <div class="modal-hdr"><h2>削除確認</h2></div>
+    <div class="modal-body">
+      <p id="delMsg" style="line-height:1.7;"></p>
+    </div>
+    <div class="modal-ftr">
+      <button class="btn btn-cancel" id="delCancelBtn">キャンセル</button>
+      <button class="btn btn-danger" id="delConfirmBtn">削除する</button>
+    </div>
+  </div>
+</div>
+
+<!-- ツールチップ -->
+<div class="tooltip" id="tooltip"></div>
+
+<!-- CSVインポート用 -->
+<input type="file" id="csvFile" accept=".csv" style="display:none">
+
+<script src="app.js"></script>
+</body>
+</html>

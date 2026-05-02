@@ -1,0 +1,191 @@
+/* ========================================
+   村田鉄筋㈱ 年間工程表 - 印刷スタイル
+   ======================================== */
+
+@media print {
+
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  body {
+    background: white !important;
+    font-size: 9px !important;
+    margin: 0;
+    padding: 0;
+  }
+
+  /* 印刷非表示 */
+  .no-print {
+    display: none !important;
+  }
+
+  /* 印刷のみ表示 */
+  .print-only {
+    display: block !important;
+  }
+
+  /* 印刷ヘッダー */
+  .print-header {
+    padding: 4px 8px 6px;
+    border-bottom: 2px solid #1a3a6b;
+    margin-bottom: 4px;
+  }
+
+  .print-title {
+    font-size: 14px;
+    font-weight: bold;
+    color: #1a3a6b;
+    text-align: center;
+    letter-spacing: 2px;
+  }
+
+  .print-date {
+    font-size: 10px;
+    color: #555;
+    text-align: right;
+    margin-top: 2px;
+  }
+
+  /* メインコンテナ */
+  .main-container {
+    height: auto !important;
+    overflow: visible !important;
+    padding: 0 !important;
+  }
+
+  .gantt-wrapper {
+    display: block !important;
+    border: none !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+  }
+
+  /* 左パネル・右パネルを横並びで固定 */
+  .left-panel {
+    overflow: visible !important;
+    border-right: 2px solid #555 !important;
+    display: inline-block;
+    vertical-align: top;
+    float: left;
+    box-shadow: none !important;
+  }
+
+  .right-panel {
+    overflow: visible !important;
+    display: inline-block;
+    vertical-align: top;
+    float: left;
+    width: calc(100% - 460px);
+  }
+
+  /* テーブル */
+  .left-table,
+  .right-table {
+    font-size: 8px !important;
+    page-break-inside: avoid;
+  }
+
+  .left-table th,
+  .left-table td,
+  .right-table th,
+  .right-table td {
+    border: 0.5px solid #999 !important;
+    padding: 1px 2px !important;
+    height: 22px !important;
+    font-size: 8px !important;
+  }
+
+  /* ヘッダー */
+  .header-row-top th {
+    height: 36px !important;
+    font-size: 8px !important;
+    background: #2456a4 !important;
+    color: white !important;
+  }
+
+  .month-header-row th {
+    height: 18px !important;
+    font-size: 9px !important;
+    background: #2456a4 !important;
+    color: white !important;
+    position: static !important;
+  }
+
+  .week-header-row th {
+    height: 12px !important;
+    font-size: 7px !important;
+    background: #d8e4f5 !important;
+    color: #1a3a6b !important;
+    position: static !important;
+  }
+
+  /* 現場名列 */
+  .col-name { width: 150px !important; min-width: 150px !important; }
+  .col-tanto { width: 40px !important; min-width: 40px !important; }
+  .col-kubun { width: 32px !important; }
+  .col-quantity { width: 40px !important; }
+  .col-material { width: 44px !important; }
+  .col-shikyuu { width: 30px !important; }
+  .col-zaikouwork { width: 30px !important; }
+  .col-no { width: 24px !important; }
+
+  /* セクション区切り */
+  tr.section-divider td,
+  tr.section-divider th {
+    background: #ff8c00 !important;
+    color: white !important;
+    font-size: 11px !important;
+    height: 24px !important;
+  }
+
+  /* ガントバー */
+  .gantt-bar {
+    height: 12px !important;
+  }
+
+  .gantt-bar::after {
+    border-top-width: 6px !important;
+    border-bottom-width: 6px !important;
+    border-left-width: 6px !important;
+    right: -6px !important;
+  }
+
+  .gantt-bar-text {
+    font-size: 7px !important;
+  }
+
+  /* ページ設定 */
+  @page {
+    margin: 8mm 6mm;
+  }
+
+  /* A3横 */
+  @page :landscape {
+    size: A3 landscape;
+    margin: 8mm 6mm;
+  }
+
+  /* ページ区切り */
+  .gantt-wrapper::after {
+    content: '';
+    display: block;
+    clear: both;
+  }
+
+  /* アクションボタン非表示 */
+  .row-actions {
+    display: none !important;
+  }
+
+  /* 今日の線非表示 */
+  .today-line {
+    display: none !important;
+  }
+}
+
+/* 印刷プレビュー用（print-onlyクラスはデフォルト非表示） */
+.print-only {
+  display: none;
+}
