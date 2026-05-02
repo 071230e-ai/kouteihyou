@@ -906,3 +906,4 @@ function init() {
 }
 
 document.addEventListener('DOMContentLoaded', init);
+// 年間工程表アプリ v1.0
