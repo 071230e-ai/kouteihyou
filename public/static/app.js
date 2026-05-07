@@ -62,59 +62,86 @@
     localStorage.setItem(STORAGE_KEY, JSON.stringify(sites));
   }
   // 旧データの構造を新スキーマに変換(エラーにならないように)
+  // 注意: shikyuu / zaikou は新スキーマでは使わないため移行時に破棄。
+  //       ただし古い JSON に残っていてもエラーにならないように ?? で参照保護。
   function migrateSite(s) {
     if (!s || typeof s !== 'object') return s;
-    // 番号: 既存値があれば数値化、なければ未設定(後で採番)
-    let no = null;
-    if (s.no !== undefined && s.no !== null && s.no !== '') {
-      const n = Number(s.no);
-      if (isFinite(n) && n > 0) no = Math.floor(n);
+    // 番号(siteNo / no どちらでも受ける、優先は siteNo)
+    let siteNo = null;
+    const rawNo = (s.siteNo !== undefined && s.siteNo !== null && s.siteNo !== '')
+      ? s.siteNo : s.no;
+    if (rawNo !== undefined && rawNo !== null && rawNo !== '') {
+      const n = Number(rawNo);
+      if (isFinite(n) && n > 0) siteNo = Math.floor(n);
     }
+    // 材料区分: 既存 zairyou / material / 旧 shikyuu・zaikou フラグから推定
+    let material = s.zairyou || s.material;
+    if (!material) {
+      // 旧フラグから復元
+      if (s.shikyuu === true || s.shikyuu === '〇' || s.shikyuu === '○' || s.shikyuu === 1) material = '支給材';
+      else if (s.zaikou === true || s.zaikou === '〇' || s.zaikou === '○' || s.zaikou === 1) material = '材工';
+      else material = normalizeOldContractType(s.contractType);
+    }
+    material = normalizeMaterial(material);
+
     return {
       id: s.id || uid(),
-      no: no,
+      siteNo: siteNo,                       // 表示順用(任意)
+      no: siteNo,                           // 互換用エイリアス(古いコードからの参照保護)
       name: s.name || s.siteName || '',
       manager: s.manager || '',
-      // 旧 kubun → structure に移行(なければ既存structure)
+      // 旧 kubun → structure に移行
       structure: s.structure || s.kubun || '',
-      // 数量は数値で保持(unitがあっても t に統一して扱う)
-      // 旧データで unit==='kg' の場合は t に換算
       quantity: convertQuantityToT(s.quantity, s.quantityUnit || s.unit),
-      // 材料区分: 旧値を「材工」「支給材」の2択に正規化
-      material: normalizeMaterial(s.material || normalizeOldContractType(s.contractType)),
-      // 受注状況: 既存値がなければ「受注済み」をデフォルト
+      // 材料区分(zairyou)に一本化。shikyuu/zaikou は使わない。
+      zairyou: material,
+      material: material,                   // 互換用エイリアス
       orderStatus: s.orderStatus || '受注済み',
       startDate: s.startDate || '',
       endDate: s.endDate || '',
-      // 契約金額: contractAmount があればそれを優先
+      actualEndDate: s.actualEndDate || '',
+      status: s.status || '',
+      cellColor: s.cellColor || '',
+      processMemo: s.processMemo || '',
+      contractor: s.contractor || s.prime || '',
+      address: s.address || '',
       amount: toNumberSafe(s.amount != null ? s.amount : s.contractAmount),
       memo: s.memo || '',
       createdAt: s.createdAt || new Date().toISOString(),
       updatedAt: s.updatedAt || new Date().toISOString()
     };
   }
-  // 番号未設定のデータに自動採番(既存最大+1)
+  // 番号未設定のデータには採番しない(仕様9: 番号なしはリスト末尾に表示)
+  // 互換エイリアス維持のためのみ呼ぶ
   function ensureSiteNumbers() {
-    const used = sites.map(s => Number(s.no)).filter(n => isFinite(n) && n > 0);
-    let next = used.length ? Math.max.apply(null, used) + 1 : 1;
     sites.forEach(s => {
-      if (!s.no || !isFinite(Number(s.no)) || Number(s.no) <= 0) {
-        s.no = next++;
+      if (s.siteNo !== undefined && s.siteNo !== null && s.siteNo !== '') {
+        const n = Number(s.siteNo);
+        s.siteNo = (isFinite(n) && n > 0) ? Math.floor(n) : null;
       } else {
-        s.no = Math.floor(Number(s.no));
+        s.siteNo = null;
       }
+      s.no = s.siteNo; // 互換用
     });
   }
   // 番号順ソート用比較関数
+  // - 番号ありが先(若い順)
+  // - 番号なしは末尾(その中では id 順 = 登録順)
+  // - 同番号は id(=登録時タイムスタンプを含む)で安定ソート
   function compareByNo(a, b) {
-    const na = Number(a.no) || 0;
-    const nb = Number(b.no) || 0;
-    if (na !== nb) return na - nb;
-    return (a.startDate || '').localeCompare(b.startDate || '');
+    const naRaw = (a.siteNo != null) ? Number(a.siteNo) : (a.no != null ? Number(a.no) : NaN);
+    const nbRaw = (b.siteNo != null) ? Number(b.siteNo) : (b.no != null ? Number(b.no) : NaN);
+    const aHas = isFinite(naRaw) && naRaw > 0;
+    const bHas = isFinite(nbRaw) && nbRaw > 0;
+    if (aHas && !bHas) return -1;
+    if (!aHas && bHas) return 1;
+    if (aHas && bHas && naRaw !== nbRaw) return naRaw - nbRaw;
+    // 番号なし同士、または同番号 → id 順(登録順)
+    return String(a.id || '').localeCompare(String(b.id || ''));
   }
-  // 次の番号(新規登録時のデフォルト)
+  // 次の番号(新規登録時のデフォルト表示。ユーザーは空にもできる)
   function nextSiteNo() {
-    const used = sites.map(s => Number(s.no)).filter(n => isFinite(n) && n > 0);
+    const used = sites.map(s => Number(s.siteNo || s.no)).filter(n => isFinite(n) && n > 0);
     return used.length ? Math.max.apply(null, used) + 1 : 1;
   }
   function convertQuantityToT(q, unit) {
@@ -1270,9 +1297,11 @@
   function exportCSV() {
     const target = getExportTargetSites();
     if (target.length === 0) { showToast('表示期間内の出力対象がありません', 'error'); return; }
-    const headers = ['No', '現場名・工事内容', '現場担当', '建物の構造', '総数量(t)', '工期開始日', '工期終了日', '材料区分', '受注状況', '契約金額(円)'];
+    // 「No」(行番号)とは別に「番号」(siteNo)列を追加。支給/材工列は無し。
+    const headers = ['No', '番号', '現場名・工事内容', '現場担当', '建物の構造', '総数量(t)', '工期開始日', '工期終了日', '材料区分', '受注状況', '契約金額(円)', '備考'];
     const rows = target.map((s, i) => [
-      s.no || (i + 1),
+      i + 1,
+      (s.siteNo != null && s.siteNo !== '') ? s.siteNo : (s.no != null ? s.no : ''),
       s.name || '',
       s.manager || '',
       s.structure || '',
@@ -1281,7 +1310,8 @@
       s.endDate || '',
       normalizeMaterial(s.material) || '',
       s.orderStatus || '',
-      s.amount || 0
+      s.amount || 0,
+      s.memo || ''
     ]);
     const csv = [headers, ...rows].map(r => r.map(csvCell).join(',')).join('\r\n');
     const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' });
@@ -1292,7 +1322,7 @@
   function exportExcel() {
     const target = getExportTargetSites();
     if (target.length === 0) { showToast('表示期間内の出力対象がありません', 'error'); return; }
-    const headers = ['No', '現場名・工事内容', '現場担当', '建物の構造', '総数量(t)', '工期開始日', '工期終了日', '材料区分', '受注状況', '契約金額(円)'];
+    const headers = ['No', '番号', '現場名・工事内容', '現場担当', '建物の構造', '総数量(t)', '工期開始日', '工期終了日', '材料区分', '受注状況', '契約金額(円)', '備考'];
     let xml = '<?xml version="1.0" encoding="UTF-8"?>';
     xml += '<?mso-application progid="Excel.Sheet"?>';
     xml += '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">';
@@ -1307,8 +1337,14 @@
     xml += '<Row></Row>';
     xml += '<Row>' + headers.map(h => `<Cell ss:StyleID="header"><Data ss:Type="String">${escapeXml(h)}</Data></Cell>`).join('') + '</Row>';
     target.forEach((s, i) => {
+      const siteNoVal = (s.siteNo != null && s.siteNo !== '') ? s.siteNo : (s.no != null ? s.no : '');
       xml += '<Row>';
-      xml += `<Cell ss:StyleID="num"><Data ss:Type="Number">${s.no || (i + 1)}</Data></Cell>`;
+      xml += `<Cell ss:StyleID="num"><Data ss:Type="Number">${i + 1}</Data></Cell>`;
+      if (siteNoVal === '' || siteNoVal == null) {
+        xml += `<Cell><Data ss:Type="String"></Data></Cell>`;
+      } else {
+        xml += `<Cell ss:StyleID="num"><Data ss:Type="Number">${Number(siteNoVal) || 0}</Data></Cell>`;
+      }
       xml += `<Cell><Data ss:Type="String">${escapeXml(s.name || '')}</Data></Cell>`;
       xml += `<Cell><Data ss:Type="String">${escapeXml(s.manager || '')}</Data></Cell>`;
       xml += `<Cell><Data ss:Type="String">${escapeXml(s.structure || '')}</Data></Cell>`;
@@ -1318,6 +1354,7 @@
       xml += `<Cell><Data ss:Type="String">${escapeXml(normalizeMaterial(s.material) || '')}</Data></Cell>`;
       xml += `<Cell><Data ss:Type="String">${escapeXml(s.orderStatus || '')}</Data></Cell>`;
       xml += `<Cell ss:StyleID="num"><Data ss:Type="Number">${Number(s.amount) || 0}</Data></Cell>`;
+      xml += `<Cell><Data ss:Type="String">${escapeXml(s.memo || '')}</Data></Cell>`;
       xml += '</Row>';
     });
     xml += '</Table></Worksheet></Workbook>';
