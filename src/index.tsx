@@ -63,11 +63,11 @@ app.get('/', (c) => {
               <button id="btnRangeNext" class="btn btn-text" title="1ヶ月後へ"><i class="fas fa-chevron-right"></i></button>
               <button id="btnRangeToday" class="btn btn-text" title="今月を開始月に">今月</button>
               <span id="rangeLabel" class="range-label"></span>
-              <button id="btnPrint" class="btn btn-secondary">
+              <button id="btnPrint" class="btn btn-secondary" title="ブラウザの印刷ダイアログ">
                 <i class="fas fa-print"></i> 印刷
               </button>
-              <button id="btnPdf" class="btn btn-primary">
-                <i class="fas fa-file-pdf"></i> 工程表PDFをダウンロード
+              <button id="btnPdf" class="btn btn-primary" title="PDFファイルを直接ダウンロード">
+                <i class="fas fa-file-pdf"></i> 工程表PDFダウンロード
               </button>
             </div>
           </div>
@@ -284,11 +284,11 @@ app.get('/', (c) => {
               <select id="summaryStartYear" class="year-select" aria-label="開始年"></select>
               <select id="summaryStartMonth" class="year-select" aria-label="開始月"></select>
               <span id="summaryRangeLabel" class="range-label"></span>
-              <button id="btnSummaryPrint" class="btn btn-secondary">
+              <button id="btnSummaryPrint" class="btn btn-secondary" title="ブラウザの印刷ダイアログ">
                 <i class="fas fa-print"></i> 集計印刷
               </button>
-              <button id="btnSummaryPdf" class="btn btn-primary">
-                <i class="fas fa-file-pdf"></i> 集計PDFをダウンロード
+              <button id="btnSummaryPdf" class="btn btn-primary" title="PDFファイルを直接ダウンロード">
+                <i class="fas fa-file-pdf"></i> 集計PDFダウンロード
               </button>
               <button id="btnSummaryCsv" class="btn btn-primary">
                 <i class="fas fa-file-csv"></i> 集計CSV出力
@@ -315,18 +315,18 @@ app.get('/', (c) => {
           <div class="export-grid">
             <div class="export-card">
               <i class="fas fa-file-pdf export-icon" style="color:#c0392b"></i>
-              <h3>工程表PDFをダウンロード</h3>
-              <p>年間工程表をA3横向きでPDFダウンロード</p>
+              <h3>工程表PDFダウンロード</h3>
+              <p>年間工程表をA3横向きでPDFダウンロード(印刷ダイアログを開かず直接保存)</p>
               <button id="btnExportPdf" class="btn btn-primary">
-                <i class="fas fa-file-pdf"></i> 工程表PDFをダウンロード
+                <i class="fas fa-file-pdf"></i> 工程表PDFダウンロード
               </button>
             </div>
             <div class="export-card">
               <i class="fas fa-file-pdf export-icon" style="color:#8e44ad"></i>
-              <h3>集計PDFをダウンロード</h3>
-              <p>集計表をA4縦向きでPDFダウンロード</p>
+              <h3>集計PDFダウンロード</h3>
+              <p>集計表をA3横向きでPDFダウンロード(印刷ダイアログを開かず直接保存)</p>
               <button id="btnExportSummaryPdfMain" class="btn btn-primary">
-                <i class="fas fa-file-pdf"></i> 集計PDFをダウンロード
+                <i class="fas fa-file-pdf"></i> 集計PDFダウンロード
               </button>
             </div>
             <div class="export-card">
@@ -348,7 +348,7 @@ app.get('/', (c) => {
               <button id="btnExportSummaryCsv" class="btn btn-secondary">
                 <i class="fas fa-file-csv"></i> 集計CSV
               </button>
-              <button id="btnExportSummaryPdf" class="btn btn-secondary" style="margin-left:6px">PDF/印刷</button>
+              <button id="btnExportSummaryPdf" class="btn btn-secondary" style="margin-left:6px" title="印刷ダイアログを開く"><i class="fas fa-print"></i> 印刷</button>
             </div>
             <div class="export-card">
               <i class="fas fa-database export-icon" style="color:#2980b9"></i>
@@ -367,8 +367,15 @@ app.get('/', (c) => {
       {/* トースト通知 */}
       <div id="toast" class="toast"></div>
 
+      {/* PDF出力専用エリア(画面外配置・display:noneは使わない・html2canvasで撮影可能) */}
+      <div id="pdfScheduleArea" class="pdf-only-area" aria-hidden="true"></div>
+      <div id="pdfSummaryArea" class="pdf-only-area" aria-hidden="true"></div>
+
       <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet" />
       <script src="https://cdn.jsdelivr.net/npm/dayjs@1.11.10/dayjs.min.js"></script>
+      {/* PDF生成用ライブラリ */}
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
       <script src="/static/app.js"></script>
     </div>
   )

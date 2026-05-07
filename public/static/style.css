@@ -1032,3 +1032,580 @@ body.role-viewer .admin-only { display: none !important; }
   body.print-target-summary { page: summaryA4; }
   @page summaryA4 { size: A4 portrait; margin: 12mm; }
 }
+
+/* ============================================================
+   PDF出力専用エリア(html2canvas + jsPDF用)
+   - 通常時は画面外に配置して非表示
+   - PDF生成時のみ data-pdf-active="1" にして可視化
+   - @media print に依存せず、html2canvasでDOMを画像化する
+   ============================================================ */
+.pdf-area {
+  position: absolute;
+  left: -100000px;
+  top: 0;
+  width: 1700px;            /* A3横の有効描画幅 (約297mm × scale) */
+  background: #ffffff;
+  color: #1a2332;
+  font-family: 'Hiragino Sans', 'Yu Gothic', 'Meiryo', sans-serif;
+  font-size: 12px;
+  z-index: -1;
+  visibility: visible;       /* html2canvasに見えている必要があるので display:none は使わない */
+  pointer-events: none;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+.pdf-area[data-pdf-active="1"] {
+  /* PDF生成中の状態(可視化はしないが画面に重なる位置に出さない) */
+  left: -100000px;
+}
+
+/* PDF専用ヘッダ */
+.pdf-area .pdf-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  border-bottom: 3px solid #1a4a7a;
+  padding: 6px 14px 8px;
+  margin-bottom: 10px;
+}
+.pdf-area .pdf-header-left .pdf-company {
+  font-size: 13px;
+  color: #6b7a8a;
+  font-weight: 600;
+}
+.pdf-area .pdf-header-left .pdf-doc-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: #1a4a7a;
+  margin-top: 2px;
+}
+.pdf-area .pdf-header-right {
+  text-align: right;
+  font-size: 11px;
+  color: #34495e;
+  line-height: 1.5;
+}
+.pdf-area .pdf-header-right .pdf-period {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1a4a7a;
+}
+
+/* PDF専用テーブル */
+.pdf-area .pdf-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  table-layout: fixed;
+}
+.pdf-area .pdf-table th,
+.pdf-area .pdf-table td {
+  border: 1px solid #b8c5d6;
+  padding: 4px 6px;
+  vertical-align: middle;
+  font-size: 11px;
+  color: #1a2332;
+  background: #fff;
+}
+.pdf-area .pdf-table thead th {
+  background: #1a4a7a !important;
+  color: #ffffff !important;
+  font-weight: 600;
+  text-align: center;
+  font-size: 11px;
+  padding: 6px 4px;
+}
+.pdf-area .pdf-table .pdf-col-no       { width: 32px;  text-align: center; }
+.pdf-area .pdf-table .pdf-col-siteno   { width: 44px;  text-align: center; }
+.pdf-area .pdf-table .pdf-col-name     { width: 220px; text-align: left; }
+.pdf-area .pdf-table .pdf-col-manager  { width: 80px;  text-align: center; }
+.pdf-area .pdf-table .pdf-col-structure{ width: 90px;  text-align: center; }
+.pdf-area .pdf-table .pdf-col-quantity { width: 70px;  text-align: right; }
+.pdf-area .pdf-table .pdf-col-material { width: 78px;  text-align: center; }
+.pdf-area .pdf-table .pdf-col-amount   { width: 110px; text-align: right; }
+.pdf-area .pdf-table .pdf-col-month    { width: 56px;  padding: 0 !important; position: relative; height: 30px; }
+
+/* 行の縞模様 */
+.pdf-area .pdf-table tbody tr:nth-child(even) td { background: #f6f9fc; }
+
+/* 現場名セル(タグや情報を含む) */
+.pdf-area .pdf-name-main {
+  font-weight: 600;
+  font-size: 11px;
+  color: #1a2332;
+  display: block;
+  margin-bottom: 2px;
+  line-height: 1.3;
+}
+.pdf-area .pdf-name-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  align-items: center;
+}
+
+/* PDF専用バッジ(画面と同じ色で描画) */
+.pdf-area .pdf-badge {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 9px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #ffffff;
+  background: #6c7a89;
+  line-height: 1.4;
+  white-space: nowrap;
+  border: 1px solid rgba(0,0,0,0.1);
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+.pdf-area .pdf-badge-zaikou   { background: #27ae60; color: #fff; }   /* 材工 = 緑 */
+.pdf-area .pdf-badge-shikyuu  { background: #2980b9; color: #fff; }   /* 支給材 = 青 */
+.pdf-area .pdf-badge-confirmed{ background: #1a4a7a; color: #fff; }   /* 受注済み */
+.pdf-area .pdf-badge-tentative{ background: #f39c12; color: #fff; border: 1px dashed #b8740a; } /* 受注可能性 */
+.pdf-area .pdf-badge-status-progress { background: #2980b9; color: #fff; }
+.pdf-area .pdf-badge-status-done     { background: #27ae60; color: #fff; }
+.pdf-area .pdf-badge-status-pending  { background: #95a5a6; color: #fff; }
+.pdf-area .pdf-badge-status-undecided{ background: #fff; color: #2980b9; border: 1px dashed #2980b9; }
+
+/* マネージャー / 構造 タグ(色をそのまま) */
+.pdf-area .pdf-tag {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+  background: #6c7a89;
+  line-height: 1.3;
+  white-space: nowrap;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+.pdf-area .pdf-tag.palette-blue   { background: #2980b9; }
+.pdf-area .pdf-tag.palette-green  { background: #27ae60; }
+.pdf-area .pdf-tag.palette-orange { background: #e67e22; }
+.pdf-area .pdf-tag.palette-purple { background: #8e44ad; }
+.pdf-area .pdf-tag.palette-teal   { background: #16a085; }
+.pdf-area .pdf-tag.palette-brown  { background: #8b5a2b; }
+.pdf-area .pdf-tag.palette-navy   { background: #1a4a7a; }
+.pdf-area .pdf-tag.palette-pink   { background: #e84393; }
+.pdf-area .pdf-tag.palette-cyan   { background: #17a2b8; }
+.pdf-area .pdf-tag.palette-indigo { background: #3f51b5; }
+.pdf-area .pdf-tag.palette-olive  { background: #8a8c25; }
+.pdf-area .pdf-tag.palette-rose   { background: #c0392b; }
+.pdf-area .pdf-tag.palette-gray   { background: #7f8c8d; }
+
+/* PDF用ガントバー */
+.pdf-area .pdf-gantt-cell {
+  position: relative;
+  height: 30px;
+  padding: 0 !important;
+  background: #ffffff;
+}
+.pdf-area .pdf-gantt-bar {
+  position: absolute;
+  top: 6px;
+  height: 18px;
+  border-radius: 3px;
+  font-size: 10px;
+  color: #fff;
+  font-weight: 700;
+  text-align: center;
+  line-height: 18px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border: 1px solid rgba(0,0,0,0.15);
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+.pdf-area .pdf-gantt-bar.bar-supply       { background: #2980b9; }
+.pdf-area .pdf-gantt-bar.bar-materialwork { background: #27ae60; }
+.pdf-area .pdf-gantt-bar.bar-other        { background: #7f8c8d; }
+.pdf-area .pdf-gantt-bar.bar-tentative    {
+  background: repeating-linear-gradient(45deg, #f39c12, #f39c12 6px, #f6c47a 6px, #f6c47a 12px);
+  border: 1px dashed #b8740a;
+  color: #5a3a07;
+}
+
+/* PDF集計セクション */
+.pdf-area .pdf-summary-section { margin-bottom: 14px; page-break-inside: avoid; }
+.pdf-area .pdf-summary-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #1a4a7a;
+  border-bottom: 2px solid #1a4a7a;
+  padding-bottom: 3px;
+  margin: 0 0 6px;
+}
+.pdf-area .pdf-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.pdf-area .pdf-kpi-card {
+  border: 1px solid #cdd6e0;
+  background: #f6f9fc;
+  padding: 8px 10px;
+  border-radius: 4px;
+}
+.pdf-area .pdf-kpi-label { font-size: 10px; color: #6b7a8a; margin-bottom: 3px; }
+.pdf-area .pdf-kpi-value { font-size: 16px; font-weight: 700; color: #1a4a7a; }
+.pdf-area .pdf-kpi-sub   { font-size: 10px; color: #6b7a8a; margin-top: 2px; }
+
+/* PDF生成中ローディング */
+.pdf-loading-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(26, 35, 50, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 99999;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 600;
+}
+.pdf-loading-overlay .pdf-loading-box {
+  background: #1a4a7a;
+  padding: 20px 32px;
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.pdf-loading-overlay i { font-size: 22px; }
+
+/* ============================================================
+   PDF\u51fa\u529b\u5c02\u7528 (CSS Grid\u30d9\u30fc\u30b9): \u30ac\u30f3\u30c8\u30d0\u30fc\u3092 grid-column \u3067\u8907\u6570\u6708\u306b\u308f\u305f\u3063\u3066\u4f38\u3070\u3059
+   - \u3053\u3061\u3089\u306e\u30af\u30e9\u30b9\u3092\u4f7f\u3046\u3068\u3001PDF\u51fa\u529b\u3067\u30d0\u30fc\u304c\u9014\u4e2d\u3067\u5207\u308c\u305a\u3001
+     position:absolute \u306b\u4f9d\u5b58\u3057\u306a\u3044
+   ============================================================ */
+
+/* PDF\u5c02\u7528\u30a8\u30ea\u30a2(\u753b\u9762\u5916\u914d\u7f6e\u3001display:none\u306f\u4f7f\u308f\u306a\u3044) */
+.pdf-only-area {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 1600px;          /* PDF\u51fa\u529b\u30b9\u30c6\u30fc\u30b8\u306e\u56fa\u5b9a\u5e45 */
+  background: #ffffff;
+  color: #1a2332;
+  font-family: 'Hiragino Sans', 'Yu Gothic', 'Meiryo', sans-serif;
+  font-size: 12px;
+  z-index: -1;
+  opacity: 0;             /* \u753b\u9762\u4e0a\u306f\u898b\u3048\u306a\u3044\u304c html2canvas \u306f\u63cf\u753b\u3067\u304d\u308b */
+  pointer-events: none;
+  visibility: visible;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+  overflow: visible;
+  box-sizing: border-box;
+}
+/* PDF\u751f\u6210\u4e2d\u306e\u307f\u753b\u9762\u4e0a\u3067\u898b\u3048\u308b\u72b6\u614b\u306b\u3059\u308b(html2canvas\u306f\u305d\u306e\u307e\u307e\u63cf\u753b\u53ef) */
+.pdf-only-area[data-pdf-active="1"] {
+  opacity: 1;
+  z-index: 99997;
+}
+
+/* \u30d8\u30c3\u30c0 */
+.pdf-only-area .pdf-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  border-bottom: 3px solid #1a4a7a;
+  padding: 8px 16px 10px;
+  margin: 8px 12px 12px;
+}
+.pdf-only-area .pdf-header-left .pdf-company {
+  font-size: 13px;
+  color: #6b7a8a;
+  font-weight: 600;
+}
+.pdf-only-area .pdf-header-left .pdf-doc-title {
+  font-size: 24px;
+  font-weight: 700;
+  color: #1a4a7a;
+  margin-top: 2px;
+}
+.pdf-only-area .pdf-header-right {
+  text-align: right;
+  font-size: 12px;
+  color: #34495e;
+  line-height: 1.6;
+}
+.pdf-only-area .pdf-header-right .pdf-period {
+  font-size: 14px;
+  font-weight: 700;
+  color: #1a4a7a;
+}
+
+/* ============ Grid\u30d9\u30fc\u30b9\u306e\u5de5\u7a0b\u8868 ============ */
+/* \u30b0\u30ea\u30c3\u30c9\u9577\u3055\u306e\u5b9a\u7fa9: \u5de6\u30b5\u30a4\u30c9\u60c5\u5831\u9818\u57df + 12\u30f6\u6708 */
+:root {
+  --pdf-info-width: 700px;     /* \u5de6\u5074\u60c5\u5831\u30a8\u30ea\u30a2\u306e\u5408\u8a08\u5e45 */
+  --pdf-month-width: 72px;     /* 1\u30f6\u6708\u306e\u5e45 (1600 - 700 = 900 / 12 \u2248 75) */
+}
+/* \u30ec\u30a4\u30a2\u30a6\u30c8\u30b0\u30ea\u30c3\u30c9: \u5de6\u30c6\u30fc\u30d6\u30eb\u90e8 + \u53f3\u30ac\u30f3\u30c8\u90e8\u3092\u305d\u308c\u305e\u308c\u540c\u3058 grid \u30c6\u30f3\u30d7\u30ec\u30fc\u30c8\u3067\u63c3\u3048\u308b */
+.pdf-only-area .pdf-grid {
+  margin: 0 12px 12px;
+  border: 1px solid #b8c5d6;
+  background: #fff;
+}
+.pdf-only-area .pdf-grid-row {
+  display: grid;
+  grid-template-columns:
+    32px              /* No */
+    44px              /* \u756a\u53f7 */
+    240px             /* \u73fe\u5834\u540d */
+    90px              /* \u62c5\u5f53 */
+    100px             /* \u69cb\u9020 */
+    72px              /* \u6570\u91cf */
+    78px              /* \u6750\u6599\u533a\u5206 */
+    110px             /* \u5951\u7d04\u91d1\u984d */
+    repeat(12, var(--pdf-month-width));   /* 12\u30f6\u6708 */
+  align-items: stretch;
+}
+.pdf-only-area .pdf-grid-row > * {
+  border-right: 1px solid #cdd6e0;
+  border-bottom: 1px solid #cdd6e0;
+  padding: 4px 6px;
+  font-size: 11px;
+  line-height: 1.35;
+  background: #ffffff;
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  min-width: 0;            /* \u30c6\u30ad\u30b9\u30c8\u304c\u6e62\u308c\u305f\u3068\u304d\u306b\u30b0\u30ea\u30c3\u30c9\u30b5\u30a4\u30ba\u3092\u58ca\u3055\u306a\u3044 */
+}
+.pdf-only-area .pdf-grid-row > .pdf-c-no       { justify-content: center; }
+.pdf-only-area .pdf-grid-row > .pdf-c-siteno   { justify-content: center; }
+.pdf-only-area .pdf-grid-row > .pdf-c-name     { justify-content: flex-start; }
+.pdf-only-area .pdf-grid-row > .pdf-c-manager  { justify-content: center; }
+.pdf-only-area .pdf-grid-row > .pdf-c-structure{ justify-content: center; }
+.pdf-only-area .pdf-grid-row > .pdf-c-quantity { justify-content: flex-end; }
+.pdf-only-area .pdf-grid-row > .pdf-c-material { justify-content: center; }
+.pdf-only-area .pdf-grid-row > .pdf-c-amount   { justify-content: flex-end; }
+
+/* \u30d8\u30c3\u30c0\u884c */
+.pdf-only-area .pdf-grid-head > * {
+  background: #1a4a7a !important;
+  color: #ffffff !important;
+  font-weight: 700;
+  text-align: center;
+  font-size: 11px;
+  justify-content: center;
+  padding: 8px 4px;
+  border-right-color: #2d5a8a;
+}
+
+/* \u30c7\u30fc\u30bf\u884c\u306e\u7e1e\u6a21\u69d8 */
+.pdf-only-area .pdf-grid-body > .pdf-grid-row:nth-child(even) > * { background: #f6f9fc; }
+
+/* \u30ac\u30f3\u30c8\u884c: \u53f3\u30b5\u30a4\u30c9\u3060\u3051 grid \u3067 12\u5217 \u3092\u4f7f\u3046\u305f\u3081\u306e\u30b0\u30ea\u30c3\u30c9
+   \u30bb\u30eb\u3068\u30d0\u30fc\u3092\u540c\u3058\u30b0\u30ea\u30c3\u30c9\u4e0a\u306b\u91cd\u306d\u3066\u914d\u7f6e\u3057\u3001
+   \u30d0\u30fc\u306f grid-row: 1 / 2 \u3067 grid-column \u3092\u8907\u6570\u5217\u306b\u305f\u308f\u3089\u305b\u308b */
+.pdf-only-area .pdf-month-area {
+  /* \u30b0\u30ea\u30c3\u30c9\u4e0a\u306e 9 \u5217\u76ee\u304b\u3089 20 \u5217\u76ee\u307e\u3067(12\u30f6\u6708)\u3092\u5360\u3081\u308b */
+  grid-column: 9 / span 12;
+  display: grid;
+  grid-template-columns: repeat(12, var(--pdf-month-width));
+  grid-template-rows: 32px;
+  position: relative;
+  padding: 0 !important;
+  border-right: 0;
+  border-bottom: 1px solid #cdd6e0;
+  background: #ffffff;
+}
+/* 12\u500b\u306e\u80cc\u666f\u30bb\u30eb(\u5883\u754c\u7dda\u3092\u63cf\u304f\u305f\u3081) */
+.pdf-only-area .pdf-month-cell {
+  border-right: 1px solid #e1e7ef;
+  background: #ffffff;
+  height: 32px;
+  box-sizing: border-box;
+}
+.pdf-only-area .pdf-month-cell:last-child { border-right: 0; }
+.pdf-only-area .pdf-month-cell.q-end { border-right: 1px solid #b8c5d6; }
+.pdf-only-area .pdf-month-cell.month-newyear { border-left: 2px solid #1a4a7a; }
+
+/* \u30d8\u30c3\u30c0\u306e\u6708\u30bb\u30eb */
+.pdf-only-area .pdf-grid-head .pdf-month-area {
+  grid-template-rows: 28px;
+}
+.pdf-only-area .pdf-grid-head .pdf-month-cell {
+  background: #1a4a7a !important;
+  color: #ffffff !important;
+  font-weight: 700;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+}
+
+/* \u5b9f\u969b\u306e\u30ac\u30f3\u30c8\u30d0\u30fc(grid-column \u3067\u8907\u6570\u6708\u3092\u307e\u305f\u3050) */
+.pdf-only-area .pdf-bar {
+  grid-row: 1 / 2;
+  align-self: center;
+  margin: 4px 2px;
+  height: 22px;
+  border-radius: 3px;
+  background: #7f8c8d;
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 22px;
+  text-align: center;
+  padding: 0 6px;
+  box-sizing: border-box;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border: 1px solid rgba(0, 0, 0, 0.18);
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+  z-index: 1;
+}
+/* \u6750\u6599\u533a\u5206\u306e\u30d0\u30fc\u8272 */
+.pdf-only-area .pdf-bar-zaikou   { background: #27ae60; color: #ffffff; }   /* \u6750\u5de5 \u00b7 \u7dd1 */
+.pdf-only-area .pdf-bar-shikyu   { background: #2980b9; color: #ffffff; }   /* \u652f\u7d66\u6750 \u00b7 \u9752 */
+.pdf-only-area .pdf-bar-other    { background: #7f8c8d; color: #ffffff; }
+/* \u53d7\u6ce8\u53ef\u80fd\u6027(\u659c\u7dda) */
+.pdf-only-area .pdf-bar-possible {
+  background: repeating-linear-gradient(45deg, #f39c12, #f39c12 6px, #fbe6c4 6px, #fbe6c4 12px) !important;
+  color: #5a3a07 !important;
+  border: 1px dashed #b8740a !important;
+}
+.pdf-only-area .pdf-bar-complete { background: #27ae60; color: #ffffff; }
+.pdf-only-area .pdf-bar-delay    { background: #c0392b; color: #ffffff; }
+
+/* \u73fe\u5834\u540d\u30bb\u30eb\u306e\u5185\u5bb9(\u30bf\u30b0\u3092\u542b\u3080) */
+.pdf-only-area .pdf-name-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  width: 100%;
+}
+.pdf-only-area .pdf-name-main {
+  font-weight: 700;
+  font-size: 11px;
+  color: #1a2332;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: 100%;
+}
+.pdf-only-area .pdf-name-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  align-items: center;
+  width: 100%;
+}
+
+/* PDF\u30d0\u30c3\u30b8(\u3059\u3079\u3066 .pdf-only-area \u30b9\u30b3\u30fc\u30d7\u3067\u8272\u5408\u305b) */
+.pdf-only-area .pdf-badge {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 9px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #ffffff;
+  background: #6c7a89;
+  line-height: 1.4;
+  white-space: nowrap;
+  border: 1px solid rgba(0,0,0,0.1);
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+/* \u30b9\u30c6\u30fc\u30bf\u30b9\u30d0\u30c3\u30b8 */
+.pdf-only-area .pdf-badge-status-pending  { background: #95a5a6; color: #fff; }   /* \u672a\u7740\u624b: \u30b0\u30ec\u30fc */
+.pdf-only-area .pdf-badge-status-progress { background: #2980b9; color: #fff; }   /* \u65bd\u5de5\u4e2d: \u9752 */
+.pdf-only-area .pdf-badge-status-done     { background: #27ae60; color: #fff; }   /* \u5b8c\u4e86: \u7dd1 */
+.pdf-only-area .pdf-badge-status-undecided{ background: #ffffff; color: #2980b9; border: 1px dashed #2980b9; } /* \u672a\u78ba\u5b9a: \u70b9\u7dda */
+.pdf-only-area .pdf-badge-status-delay    { background: #c0392b; color: #fff; }   /* \u9045\u308c: \u8d64 */
+.pdf-only-area .pdf-badge-status-attention{ background: #e67e22; color: #fff; }   /* \u6ce8\u610f: \u30aa\u30ec\u30f3\u30b8 */
+/* \u53d7\u6ce8\u533a\u5206\u30d0\u30c3\u30b8 */
+.pdf-only-area .pdf-badge-confirmed{ background: #1a4a7a; color: #fff; }                   /* \u53d7\u6ce8\u6e08\u307f: \u7d3a */
+.pdf-only-area .pdf-badge-tentative{ background: #f39c12; color: #fff; border: 1px dashed #b8740a; } /* \u53d7\u6ce8\u53ef\u80fd\u6027: \u30aa\u30ec\u30f3\u30b8 */
+/* \u6750\u6599\u533a\u5206\u30d0\u30c3\u30b8 */
+.pdf-only-area .pdf-badge-zaikou   { background: #27ae60; color: #fff; }   /* \u6750\u5de5: \u7dd1 */
+.pdf-only-area .pdf-badge-shikyuu  { background: #2980b9; color: #fff; }   /* \u652f\u7d66\u6750: \u9752 */
+/* \u62c5\u5f53\u30fb\u69cb\u9020\u30bf\u30b0(\u30d1\u30ec\u30c3\u30c8) */
+.pdf-only-area .pdf-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #ffffff;
+  background: #6c7a89;
+  line-height: 1.3;
+  white-space: nowrap;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+.pdf-only-area .pdf-tag.palette-blue   { background: #2980b9; }
+.pdf-only-area .pdf-tag.palette-green  { background: #27ae60; }
+.pdf-only-area .pdf-tag.palette-orange { background: #e67e22; }
+.pdf-only-area .pdf-tag.palette-purple { background: #8e44ad; }
+.pdf-only-area .pdf-tag.palette-teal   { background: #16a085; }
+.pdf-only-area .pdf-tag.palette-brown  { background: #8b5a2b; }
+.pdf-only-area .pdf-tag.palette-navy   { background: #1a4a7a; }
+.pdf-only-area .pdf-tag.palette-pink   { background: #e84393; }
+.pdf-only-area .pdf-tag.palette-cyan   { background: #17a2b8; }
+.pdf-only-area .pdf-tag.palette-indigo { background: #3f51b5; }
+.pdf-only-area .pdf-tag.palette-olive  { background: #8a8c25; }
+.pdf-only-area .pdf-tag.palette-rose   { background: #c0392b; }
+.pdf-only-area .pdf-tag.palette-gray   { background: #7f8c8d; }
+
+/* \u96c6\u8a08\u30bb\u30af\u30b7\u30e7\u30f3 */
+.pdf-only-area .pdf-summary-section { margin: 0 12px 14px; page-break-inside: avoid; }
+.pdf-only-area .pdf-summary-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #1a4a7a;
+  border-bottom: 2px solid #1a4a7a;
+  padding-bottom: 3px;
+  margin: 0 0 8px;
+}
+.pdf-only-area .pdf-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.pdf-only-area .pdf-kpi-card {
+  border: 1px solid #cdd6e0;
+  background: #f6f9fc;
+  padding: 8px 12px;
+  border-radius: 4px;
+}
+.pdf-only-area .pdf-kpi-label { font-size: 10px; color: #6b7a8a; margin-bottom: 4px; }
+.pdf-only-area .pdf-kpi-value { font-size: 16px; font-weight: 700; color: #1a4a7a; }
+.pdf-only-area .pdf-kpi-sub   { font-size: 10px; color: #6b7a8a; margin-top: 2px; }
+/* \u30b7\u30f3\u30d7\u30eb\u30c6\u30fc\u30d6\u30eb */
+.pdf-only-area .pdf-stable {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+}
+.pdf-only-area .pdf-stable th,
+.pdf-only-area .pdf-stable td {
+  border: 1px solid #cdd6e0;
+  padding: 6px 8px;
+  font-size: 11px;
+}
+.pdf-only-area .pdf-stable thead th {
+  background: #1a4a7a !important;
+  color: #ffffff !important;
+  font-weight: 700;
+  text-align: center;
+}
+.pdf-only-area .pdf-stable tbody tr:nth-child(even) td { background: #f6f9fc; }

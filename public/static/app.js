@@ -1218,32 +1218,26 @@
 
   // ---------- 出力 ----------
   function setupExport() {
+    // 印刷ボタン: window.print() 経由(印刷ダイアログ)
     document.getElementById('btnPrint').addEventListener('click', printSchedule);
-    document.getElementById('btnPdf').addEventListener('click', printSchedule);
-
-    // 集計タブのボタン
     document.getElementById('btnSummaryPrint').addEventListener('click', printSummary);
-    document.getElementById('btnSummaryPdf').addEventListener('click', printSummary);
-    document.getElementById('btnSummaryCsv').addEventListener('click', exportSummaryCSV);
-
-    // 出力タブ
-    document.getElementById('btnExportPdf').addEventListener('click', () => {
-      document.querySelector('.tab-btn[data-tab="schedule"]').click();
-      setTimeout(printSchedule, 200);
-    });
-    document.getElementById('btnExportCsv').addEventListener('click', exportCSV);
-    document.getElementById('btnExportExcel').addEventListener('click', exportExcel);
-    const btnSummaryPdfMain = document.getElementById('btnExportSummaryPdfMain');
-    if (btnSummaryPdfMain) {
-      btnSummaryPdfMain.addEventListener('click', () => {
-        document.querySelector('.tab-btn[data-tab="summary"]').click();
-        setTimeout(printSummary, 200);
-      });
-    }
+    // 出力タブ内の旧「PDF/印刷」ボタンは印刷ダイアログ用として残す
     document.getElementById('btnExportSummaryPdf').addEventListener('click', () => {
       document.querySelector('.tab-btn[data-tab="summary"]').click();
       setTimeout(printSummary, 200);
     });
+
+    // PDFダウンロードボタン: html2canvas + jsPDF で直接ダウンロード(window.print不使用)
+    document.getElementById('btnPdf').addEventListener('click', downloadSchedulePdf);
+    document.getElementById('btnSummaryPdf').addEventListener('click', downloadSummaryPdf);
+    document.getElementById('btnExportPdf').addEventListener('click', downloadSchedulePdf);
+    const btnSummaryPdfMain = document.getElementById('btnExportSummaryPdfMain');
+    if (btnSummaryPdfMain) btnSummaryPdfMain.addEventListener('click', downloadSummaryPdf);
+
+    // CSV/Excel/JSON
+    document.getElementById('btnSummaryCsv').addEventListener('click', exportSummaryCSV);
+    document.getElementById('btnExportCsv').addEventListener('click', exportCSV);
+    document.getElementById('btnExportExcel').addEventListener('click', exportExcel);
     document.getElementById('btnExportSummaryCsv').addEventListener('click', exportSummaryCSV);
     document.getElementById('btnExportJson').addEventListener('click', exportJSON);
     document.getElementById('btnImportJson').addEventListener('click', () => {
@@ -1282,6 +1276,521 @@
       window.print();
       setTimeout(() => document.body.classList.remove('print-target-summary'), 800);
     }, 200);
+  }
+
+  // ============================================================
+  // PDFダウンロード (html2canvas + jsPDF)
+  // - window.print() を使わず、PDFファイルを直接ダウンロードする
+  // - PDF専用エリア(#pdfScheduleArea / #pdfSummaryArea)に再描画してから画像化
+  // - ファイル名は英数字のみ (例: murata_schedule_2026.pdf)
+  // ============================================================
+
+  // PDF生成中ローディング表示
+  function showPdfLoading(msg) {
+    let ov = document.getElementById('pdfLoadingOverlay');
+    if (!ov) {
+      ov = document.createElement('div');
+      ov.id = 'pdfLoadingOverlay';
+      ov.className = 'pdf-loading-overlay';
+      ov.innerHTML = `<div class="pdf-loading-box"><i class="fas fa-spinner fa-spin"></i><span id="pdfLoadingMsg"></span></div>`;
+      document.body.appendChild(ov);
+    }
+    document.getElementById('pdfLoadingMsg').textContent = msg || 'PDFを生成中...';
+    ov.style.display = 'flex';
+  }
+  function hidePdfLoading() {
+    const ov = document.getElementById('pdfLoadingOverlay');
+    if (ov) ov.style.display = 'none';
+  }
+
+  // ライブラリのロード待ち(CDNが遅延した場合に備える)
+  function ensurePdfLibsLoaded(timeoutMs) {
+    return new Promise((resolve, reject) => {
+      const t0 = Date.now();
+      (function check() {
+        const ok = (typeof window.html2canvas === 'function') &&
+                   (typeof window.jspdf !== 'undefined' && typeof window.jspdf.jsPDF === 'function');
+        if (ok) return resolve();
+        if (Date.now() - t0 > (timeoutMs || 8000)) return reject(new Error('PDFライブラリ(html2canvas/jsPDF)のロードに失敗しました'));
+        setTimeout(check, 80);
+      })();
+    });
+  }
+
+  // 受注区分→PDFバッジクラス
+  function pdfOrderBadgeClass(o) {
+    if (o === '受注済み' || o === '受注済') return 'pdf-badge-confirmed';
+    if (o === '受注可能性' || o === '可能性あり') return 'pdf-badge-tentative';
+    return '';
+  }
+  // ステータス→PDFバッジクラス
+  function pdfStatusBadgeClass(s) {
+    if (s === '施工中') return 'pdf-badge-status-progress';
+    if (s === '完了')   return 'pdf-badge-status-done';
+    if (s === '未着手') return 'pdf-badge-status-pending';
+    if (s === '未確定') return 'pdf-badge-status-undecided';
+    if (s === '遅れ')   return 'pdf-badge-status-delay';
+    if (s === '注意')   return 'pdf-badge-status-attention';
+    return 'pdf-badge-status-pending';
+  }
+  function pdfMaterialBadgeClass(m) {
+    const v = normalizeMaterial(m);
+    if (v === '材工') return 'pdf-badge-zaikou';
+    if (v === '支給材') return 'pdf-badge-shikyuu';
+    return '';
+  }
+  function pdfBarClassByMaterial(material) {
+    const m = normalizeMaterial(material);
+    if (m === '支給材') return 'bar-supply';
+    if (m === '材工')   return 'bar-materialwork';
+    return 'bar-other';
+  }
+
+  // ========== 工程表PDF専用エリアの再描画(CSS Gridベース) ==========
+  // 仕様:
+  //  - position:absolute のガントバーは使わず、行ごとに CSS Grid を組んで
+  //    ガントバーは grid-column で開始月〜終了月を span する
+  //  - これにより html2canvas が「途中で切れたバー」を撮影することがなくなる
+  //  - 月リストは 12 ヶ月分(表示開始月〜+11ヶ月)
+  function buildSchedulePdfDom() {
+    const area = document.getElementById('pdfScheduleArea');
+    if (!area) return null;
+    const months = buildMonthList(startYear, startMonth, 12);
+    const target = getExportTargetSites();
+    const rangeLabel = getRangeLabel();
+    const createdAt = fmtDateTimeJP(new Date());
+
+    // ----- ヘッダ -----
+    let html = '';
+    html += `<div class="pdf-header">`;
+    html +=   `<div class="pdf-header-left">`;
+    html +=     `<div class="pdf-company">村田鉄筋株式会社</div>`;
+    html +=     `<div class="pdf-doc-title">年間工程表</div>`;
+    html +=   `</div>`;
+    html +=   `<div class="pdf-header-right">`;
+    html +=     `<div class="pdf-period">表示期間：${escapeHtml(rangeLabel)}</div>`;
+    html +=     `<div>作成日：${escapeHtml(createdAt)}</div>`;
+    html +=   `</div>`;
+    html += `</div>`;
+
+    // ----- テーブル本体: pdf-grid > pdf-grid-row(8列+月12列) -----
+    html += `<div class="pdf-grid">`;
+
+    // ヘッダ行
+    html += `<div class="pdf-grid-row pdf-grid-head">`;
+    html +=   `<div class="pdf-c-no">No</div>`;
+    html +=   `<div class="pdf-c-siteno">番号</div>`;
+    html +=   `<div class="pdf-c-name">現場名・工事内容</div>`;
+    html +=   `<div class="pdf-c-manager">担当</div>`;
+    html +=   `<div class="pdf-c-structure">構造</div>`;
+    html +=   `<div class="pdf-c-quantity">数量(t)</div>`;
+    html +=   `<div class="pdf-c-material">材料区分</div>`;
+    html +=   `<div class="pdf-c-amount">契約金額(円)</div>`;
+    // 月ヘッダ部分(grid-column: 9 / span 12 を占めるエリア)
+    html += `<div class="pdf-month-area">`;
+    months.forEach((m, i) => {
+      const isQEnd = ((i + 1) % 3 === 0) ? ' q-end' : '';
+      const isNewYear = (i === 0 || m.month === 0) ? ' month-newyear' : '';
+      html += `<div class="pdf-month-cell${isQEnd}${isNewYear}">${m.year}/${String(m.month + 1).padStart(2, '0')}</div>`;
+    });
+    html += `</div>`;  // pdf-month-area 終
+    html += `</div>`;  // ヘッダ行終
+
+    // ----- データ行 -----
+    html += `<div class="pdf-grid-body">`;
+    if (target.length === 0) {
+      html += `<div style="padding:30px;text-align:center;color:#6b7a8a;font-size:12px">表示期間(${escapeHtml(rangeLabel)})に該当する現場がありません。</div>`;
+    } else {
+      target.forEach((s, idx) => {
+        const stStatus = deriveStatus(s);
+        const orderCls = pdfOrderBadgeClass(s.orderStatus || '');
+        const statusCls = pdfStatusBadgeClass(stStatus);
+        const matCls = pdfMaterialBadgeClass(s.material);
+        const tantoCls = tantoClass(s.manager);
+        const structCls = structureClass(s.structure);
+
+        // バーの色: 受注可能性が最優先(pdf-bar-possible)、次に材料区分
+        let barCls = 'pdf-bar-other';
+        if (s.orderStatus === '受注可能性') {
+          barCls = 'pdf-bar-possible';
+        } else if (stStatus === '完了') {
+          barCls = 'pdf-bar-complete';
+        } else if (stStatus === '遅れ') {
+          barCls = 'pdf-bar-delay';
+        } else {
+          const m = normalizeMaterial(s.material);
+          if (m === '材工')   barCls = 'pdf-bar-zaikou';
+          else if (m === '支給材') barCls = 'pdf-bar-shikyu';
+        }
+
+        html += `<div class="pdf-grid-row">`;
+        html +=   `<div class="pdf-c-no">${idx + 1}</div>`;
+        html +=   `<div class="pdf-c-siteno">${(s.siteNo != null && s.siteNo !== '') ? s.siteNo : ''}</div>`;
+        // 現場名 + ステータス・受注区分タグ
+        html +=   `<div class="pdf-c-name">`;
+        html +=     `<div class="pdf-name-block">`;
+        html +=       `<div class="pdf-name-main" title="${escapeAttr(s.name || '')}">${escapeHtml(s.name || '')}</div>`;
+        html +=       `<div class="pdf-name-tags">`;
+        if (stStatus)      html += `<span class="pdf-badge ${statusCls}">${escapeHtml(stStatus)}</span>`;
+        if (s.orderStatus) html += `<span class="pdf-badge ${orderCls}">${escapeHtml(s.orderStatus)}</span>`;
+        html +=       `</div>`;
+        html +=     `</div>`;
+        html +=   `</div>`;
+        html +=   `<div class="pdf-c-manager"><span class="pdf-tag ${tantoCls}">${escapeHtml(s.manager || '')}</span></div>`;
+        html +=   `<div class="pdf-c-structure"><span class="pdf-tag ${structCls}">${escapeHtml(s.structure || '')}</span></div>`;
+        html +=   `<div class="pdf-c-quantity">${escapeHtml(fmtTons(s.quantity))}</div>`;
+        html +=   `<div class="pdf-c-material"><span class="pdf-badge ${matCls}">${escapeHtml(normalizeMaterial(s.material) || '')}</span></div>`;
+        html +=   `<div class="pdf-c-amount">¥${escapeHtml(fmtAmount(s.amount))}</div>`;
+
+        // 月セル + バー(同じ pdf-month-area 内に並ぶ)
+        html += `<div class="pdf-month-area">`;
+        // 12個の背景セル(枠線描画用)
+        months.forEach((m, i) => {
+          const isQEnd = ((i + 1) % 3 === 0) ? ' q-end' : '';
+          const isNewYear = (i === 0 || m.month === 0) ? ' month-newyear' : '';
+          html += `<div class="pdf-month-cell${isQEnd}${isNewYear}"></div>`;
+        });
+
+        // ガントバー(startDate と endDate から再計算 -> grid-column で span)
+        const barRange = getPdfBarRange(s, months);
+        if (barRange) {
+          const labelParts = [];
+          if (s.name) labelParts.push(s.name);
+          labelParts.push(fmtTons(s.quantity));
+          const m = normalizeMaterial(s.material);
+          if (m) labelParts.push(m);
+          const barLabel = labelParts.join('　');
+          // grid-column は 1-based。背景セルは 1〜12 列目を占めているので、
+          // バーは同じ pdf-month-area の grid 上で startIndex+1 〜 endIndex+2 をまたがる
+          const gridCol = `${barRange.startIndex + 1} / ${barRange.endIndex + 2}`;
+          html += `<div class="pdf-bar ${barCls}" style="grid-column:${gridCol};" title="${escapeAttr(barLabel)}">${escapeHtml(barLabel)}</div>`;
+        }
+        html += `</div>`;  // pdf-month-area 終
+
+        html += `</div>`;  // pdf-grid-row 終
+      });
+    }
+    html += `</div>`;  // pdf-grid-body 終
+    html += `</div>`;  // pdf-grid 終
+
+    area.innerHTML = html;
+    return area;
+  }
+
+  // 表示月リスト内での月インデックス取得(無ければ -1)
+  function getMonthIndexInPdfRange(dateStr, months) {
+    const d = toDate(dateStr);
+    if (!d) return -1;
+    for (let i = 0; i < months.length; i++) {
+      if (months[i].year === d.getFullYear() && months[i].month === d.getMonth()) return i;
+    }
+    return -1;
+  }
+  // 工程バーの月インデックス範囲(表示期間でクリッピング)
+  // - 開始日が表示期間より前 → startIndex = 0
+  // - 終了日が表示期間より後 → endIndex = months.length - 1
+  // - 範囲外(完全に外) → null
+  function getPdfBarRange(site, months) {
+    const sd = toDate(site.startDate);
+    const ed = toDate(site.endDate);
+    if (!sd || !ed) return null;
+
+    const firstMonth = new Date(months[0].year, months[0].month, 1, 0, 0, 0);
+    const lastYM = months[months.length - 1];
+    const lastDayNum = new Date(lastYM.year, lastYM.month + 1, 0).getDate();
+    const lastMonth = new Date(lastYM.year, lastYM.month, lastDayNum, 23, 59, 59);
+
+    // 完全に表示期間外
+    if (ed < firstMonth || sd > lastMonth) return null;
+
+    let startIndex = getMonthIndexInPdfRange(site.startDate, months);
+    let endIndex = getMonthIndexInPdfRange(site.endDate, months);
+
+    if (startIndex < 0) {
+      // 開始日が表示期間より前 -> 0 にクリップ
+      if (sd < firstMonth) startIndex = 0;
+    }
+    if (endIndex < 0) {
+      // 終了日が表示期間より後 -> 末尾にクリップ
+      if (ed > lastMonth) endIndex = months.length - 1;
+    }
+    if (startIndex < 0 || endIndex < 0) return null;
+    if (endIndex < startIndex) return null;
+    return { startIndex, endIndex };
+  }
+
+  // ========== 集計PDF専用エリアの再描画 ==========
+  function buildSummaryPdfDom() {
+    const area = document.getElementById('pdfSummaryArea');
+    if (!area) return null;
+
+    const rangeStart = getRangeStartDate();
+    const rangeEnd = getRangeEndDate();
+    const filtered = sites.filter(s => {
+      const sd = toDate(s.startDate); const ed = toDate(s.endDate);
+      if (!sd || !ed) return false;
+      return ed >= rangeStart && sd <= rangeEnd;
+    });
+    const confirmed = filtered.filter(s => s.orderStatus === '受注済み');
+    const tentative = filtered.filter(s => s.orderStatus === '受注可能性');
+    const sumQty = (arr) => arr.reduce((a, s) => a + (Number(s.quantity) || 0), 0);
+    const sumAmt = (arr) => arr.reduce((a, s) => a + (Number(s.amount) || 0), 0);
+
+    // 担当者別
+    const byManager = {};
+    filtered.forEach(s => {
+      const k = s.manager || '(未設定)';
+      if (!byManager[k]) byManager[k] = { count: 0, qty: 0, amount: 0 };
+      byManager[k].count++;
+      byManager[k].qty += Number(s.quantity) || 0;
+      byManager[k].amount += Number(s.amount) || 0;
+    });
+    // 材料区分別
+    const byMaterial = { '材工': { count: 0, qty: 0, amount: 0 }, '支給材': { count: 0, qty: 0, amount: 0 } };
+    filtered.forEach(s => {
+      const m = normalizeMaterial(s.material);
+      if (byMaterial[m]) {
+        byMaterial[m].count++;
+        byMaterial[m].qty += Number(s.quantity) || 0;
+        byMaterial[m].amount += Number(s.amount) || 0;
+      }
+    });
+    // ステータス別
+    const byStatus = {};
+    filtered.forEach(s => {
+      const k = deriveStatus(s);
+      if (!byStatus[k]) byStatus[k] = 0;
+      byStatus[k]++;
+    });
+
+    const rangeLabel = getRangeLabel();
+    const createdAt = fmtDateTimeJP(new Date());
+
+    let html = '';
+    // ヘッダ
+    html += `<div class="pdf-header">`;
+    html +=   `<div class="pdf-header-left">`;
+    html +=     `<div class="pdf-company">村田鉄筋株式会社</div>`;
+    html +=     `<div class="pdf-doc-title">年間工程表 集計表</div>`;
+    html +=   `</div>`;
+    html +=   `<div class="pdf-header-right">`;
+    html +=     `<div class="pdf-period">表示期間：${escapeHtml(rangeLabel)}</div>`;
+    html +=     `<div>作成日：${escapeHtml(createdAt)}</div>`;
+    html +=   `</div>`;
+    html += `</div>`;
+
+    // 全体サマリー
+    html += `<div class="pdf-summary-section">`;
+    html +=   `<h3 class="pdf-summary-title">全体サマリー</h3>`;
+    html +=   `<div class="pdf-kpi-grid">`;
+    html +=     pdfKpi('総現場数', `${filtered.length}件`, `受注済み: ${confirmed.length} / 可能性: ${tentative.length}`);
+    html +=     pdfKpi('総数量', `${fmtTons(sumQty(filtered))}`, `受注済み: ${fmtTons(sumQty(confirmed))}`);
+    html +=     pdfKpi('受注済み数量', `${fmtTons(sumQty(confirmed))}`, `${confirmed.length}件`);
+    html +=     pdfKpi('受注可能性 数量', `${fmtTons(sumQty(tentative))}`, `${tentative.length}件`);
+    html +=   `</div>`;
+    html +=   `<div class="pdf-kpi-grid">`;
+    html +=     pdfKpi('材工 数量', `${fmtTons(byMaterial['材工'].qty)}`, `${byMaterial['材工'].count}件`);
+    html +=     pdfKpi('支給材 数量', `${fmtTons(byMaterial['支給材'].qty)}`, `${byMaterial['支給材'].count}件`);
+    html +=     pdfKpi('総契約金額', `¥${fmtAmount(sumAmt(filtered))}`, `受注済み: ¥${fmtAmount(sumAmt(confirmed))}`);
+    html +=     pdfKpi('受注可能性 金額', `¥${fmtAmount(sumAmt(tentative))}`, `${tentative.length}件`);
+    html +=   `</div>`;
+    html += `</div>`;
+
+    // 材料区分別
+    html += `<div class="pdf-summary-section">`;
+    html +=   `<h3 class="pdf-summary-title">材料区分別 集計</h3>`;
+    html +=   `<table class="pdf-stable"><thead><tr>`;
+    html +=     `<th style="width:25%">区分</th><th style="width:25%">件数</th><th style="width:25%">数量</th><th style="width:25%">契約金額</th>`;
+    html +=   `</tr></thead><tbody>`;
+    ['材工', '支給材'].forEach(k => {
+      const d = byMaterial[k];
+      const cls = pdfMaterialBadgeClass(k);
+      html += `<tr>`;
+      html += `<td><span class="pdf-badge ${cls}">${escapeHtml(k)}</span></td>`;
+      html += `<td style="text-align:right">${d.count}件</td>`;
+      html += `<td style="text-align:right">${fmtTons(d.qty)}</td>`;
+      html += `<td style="text-align:right">¥${fmtAmount(d.amount)}</td>`;
+      html += `</tr>`;
+    });
+    html +=   `</tbody></table>`;
+    html += `</div>`;
+
+    // ステータス別
+    html += `<div class="pdf-summary-section">`;
+    html +=   `<h3 class="pdf-summary-title">ステータス別 件数</h3>`;
+    html +=   `<table class="pdf-stable"><thead><tr>`;
+    html +=     `<th style="width:60%">ステータス</th><th style="width:40%">件数</th>`;
+    html +=   `</tr></thead><tbody>`;
+    Object.keys(byStatus).forEach(k => {
+      const cls = pdfStatusBadgeClass(k);
+      html += `<tr>`;
+      html += `<td><span class="pdf-badge ${cls}">${escapeHtml(k)}</span></td>`;
+      html += `<td style="text-align:right">${byStatus[k]}件</td>`;
+      html += `</tr>`;
+    });
+    html +=   `</tbody></table>`;
+    html += `</div>`;
+
+    // 担当者別
+    html += `<div class="pdf-summary-section">`;
+    html +=   `<h3 class="pdf-summary-title">担当者別 集計</h3>`;
+    html +=   `<table class="pdf-stable"><thead><tr>`;
+    html +=     `<th style="width:25%">担当者</th><th style="width:25%">件数</th><th style="width:25%">数量</th><th style="width:25%">契約金額</th>`;
+    html +=   `</tr></thead><tbody>`;
+    Object.keys(byManager).sort().forEach(k => {
+      const d = byManager[k];
+      const tcls = tantoClass(k);
+      html += `<tr>`;
+      html += `<td><span class="pdf-tag ${tcls}">${escapeHtml(k)}</span></td>`;
+      html += `<td style="text-align:right">${d.count}件</td>`;
+      html += `<td style="text-align:right">${fmtTons(d.qty)}</td>`;
+      html += `<td style="text-align:right">¥${fmtAmount(d.amount)}</td>`;
+      html += `</tr>`;
+    });
+    html +=   `</tbody></table>`;
+    html += `</div>`;
+
+    area.innerHTML = html;
+    return area;
+  }
+
+  function pdfKpi(label, value, sub) {
+    return `<div class="pdf-kpi-card"><div class="pdf-kpi-label">${escapeHtml(label)}</div><div class="pdf-kpi-value">${escapeHtml(value)}</div>${sub ? `<div class="pdf-kpi-sub">${escapeHtml(sub)}</div>` : ''}</div>`;
+  }
+
+  // PDF生成中だけPDF領域をレイアウト計算可能な状態にする
+  // - .pdf-only-area は通常時 opacity:0, z-index:-1 で画面に映らない
+  // - data-pdf-active="1" を付けるだけで html2canvas に対しては可視扱いになる
+  // - ユーザーには見えないよう、半透明の白マスクで覆う
+  function activatePdfArea(area) {
+    area.setAttribute('data-pdf-active', '1');
+    // 画面に映る瞬間をユーザーから隠すための白マスク
+    let mask = document.getElementById('pdfRenderMask');
+    if (!mask) {
+      mask = document.createElement('div');
+      mask.id = 'pdfRenderMask';
+      mask.style.cssText = 'position:fixed;inset:0;background:#ffffff;z-index:99998;pointer-events:none;opacity:1;';
+      document.body.appendChild(mask);
+    }
+  }
+  function deactivatePdfArea(area) {
+    area.removeAttribute('data-pdf-active');
+    // PDF専用エリアの中身をクリア(残しておくとレイアウト崩れの原因になる)
+    setTimeout(() => { try { area.innerHTML = ''; } catch (e) {} }, 200);
+    const mask = document.getElementById('pdfRenderMask');
+    if (mask && mask.parentNode) mask.parentNode.removeChild(mask);
+  }
+
+  // 共通PDFキャプチャ→jsPDF出力
+  async function capturePdf(area, filename, opts) {
+    opts = opts || {};
+    const orientation = opts.orientation || 'landscape';
+    const format = opts.format || 'a3';
+
+    // 1) html2canvas で実描画(scale=2 高解像度)
+    const canvas = await window.html2canvas(area, {
+      scale: 2,
+      useCORS: true,
+      backgroundColor: '#ffffff',
+      scrollX: 0,
+      scrollY: 0,
+      windowWidth: area.scrollWidth,
+      windowHeight: area.scrollHeight,
+      width: area.scrollWidth,
+      height: area.scrollHeight,
+      logging: false
+    });
+
+    // 2) jsPDF で多ページ分割
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ orientation, unit: 'mm', format });
+    const pageW = pdf.internal.pageSize.getWidth();
+    const pageH = pdf.internal.pageSize.getHeight();
+    const margin = 6; // mm
+    const usableW = pageW - margin * 2;
+    const usableH = pageH - margin * 2;
+
+    // 画像全体を usableW に収まるように縮小し、必要なら縦を分割して複数ページに
+    const imgWmm = usableW;
+    const imgHmm = (canvas.height * imgWmm) / canvas.width;
+
+    if (imgHmm <= usableH) {
+      // 1ページに収まる
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+      pdf.addImage(dataUrl, 'JPEG', margin, margin, imgWmm, imgHmm, undefined, 'FAST');
+    } else {
+      // 縦に複数ページ分割。各ページは canvas の一部を切り出して描画する。
+      const pxPerMm = canvas.width / imgWmm;
+      const pageSliceHpx = Math.floor(usableH * pxPerMm);
+      let yPx = 0;
+      let pageIdx = 0;
+      while (yPx < canvas.height) {
+        const sliceH = Math.min(pageSliceHpx, canvas.height - yPx);
+        const tmp = document.createElement('canvas');
+        tmp.width = canvas.width;
+        tmp.height = sliceH;
+        const ctx = tmp.getContext('2d');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, tmp.width, tmp.height);
+        ctx.drawImage(canvas, 0, yPx, canvas.width, sliceH, 0, 0, canvas.width, sliceH);
+        const sliceImg = tmp.toDataURL('image/jpeg', 0.92);
+        const sliceHmm = (sliceH * imgWmm) / canvas.width;
+        if (pageIdx > 0) pdf.addPage(format, orientation);
+        pdf.addImage(sliceImg, 'JPEG', margin, margin, imgWmm, sliceHmm, undefined, 'FAST');
+        yPx += sliceH;
+        pageIdx++;
+      }
+    }
+    pdf.save(filename);
+  }
+
+  // ========== 工程表PDFダウンロード ==========
+  async function downloadSchedulePdf() {
+    showPdfLoading('工程表PDFを生成中...');
+    try {
+      await ensurePdfLibsLoaded();
+      const area = buildSchedulePdfDom();
+      if (!area) throw new Error('PDF領域の構築に失敗しました');
+      activatePdfArea(area);
+      // フォント・レイアウト確定を待つ
+      await new Promise(r => setTimeout(r, 60));
+      try {
+        const filename = `murata_schedule_${rangeFileTag()}.pdf`;
+        await capturePdf(area, filename, { orientation: 'landscape', format: 'a3' });
+        showToast('工程表PDFをダウンロードしました', 'success');
+      } finally {
+        deactivatePdfArea(area);
+      }
+    } catch (e) {
+      console.error('downloadSchedulePdf error:', e);
+      showToast('PDF生成に失敗しました: ' + (e && e.message ? e.message : e), 'error');
+    } finally {
+      hidePdfLoading();
+    }
+  }
+
+  // ========== 集計PDFダウンロード ==========
+  async function downloadSummaryPdf() {
+    showPdfLoading('集計PDFを生成中...');
+    try {
+      await ensurePdfLibsLoaded();
+      const area = buildSummaryPdfDom();
+      if (!area) throw new Error('PDF領域の構築に失敗しました');
+      activatePdfArea(area);
+      await new Promise(r => setTimeout(r, 60));
+      try {
+        const filename = `murata_summary_${rangeFileTag()}.pdf`;
+        await capturePdf(area, filename, { orientation: 'landscape', format: 'a3' });
+        showToast('集計PDFをダウンロードしました', 'success');
+      } finally {
+        deactivatePdfArea(area);
+      }
+    } catch (e) {
+      console.error('downloadSummaryPdf error:', e);
+      showToast('PDF生成に失敗しました: ' + (e && e.message ? e.message : e), 'error');
+    } finally {
+      hidePdfLoading();
+    }
   }
 
   function getExportTargetSites() {
