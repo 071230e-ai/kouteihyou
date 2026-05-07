@@ -801,7 +801,15 @@
           const leftPct = barInfo.startOffsetPct;
           const dateRange = `${fmtDateJP(s.startDate)}〜${fmtDateJP(s.endDate)}`;
           const tip = `${s.name} / ${dateRange} / ${s.material || ''} / ${s.orderStatus || ''}`;
-          cellInner = `<div class="gantt-bar ${colorCls}${tentativeCls}" style="left:${leftPct}%;width:${widthPct}%;" title="${escapeAttr(tip)}">${escapeHtml(s.name)}</div>`;
+          // バー内ラベル: 現場名 + 数量 + 材料区分(空白埋めなし、空はスキップ)
+          const labelParts = [];
+          if (s.name) labelParts.push(s.name);
+          const tonsStr = fmtTons(s.quantity);
+          if (tonsStr) labelParts.push(tonsStr);
+          const mat = normalizeMaterial(s.material);
+          if (mat) labelParts.push(mat);
+          const barLabel = labelParts.join('　');
+          cellInner = `<div class="gantt-bar ${colorCls}${tentativeCls}" style="left:${leftPct}%;width:${widthPct}%;" title="${escapeAttr(tip)}">${escapeHtml(barLabel)}</div>`;
         }
         row += `<td class="${cls}">${cellInner}</td>`;
       }

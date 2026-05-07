@@ -374,23 +374,61 @@ input, select, textarea { font-family: inherit; font-size: 15px; }
 .bar-other {
   background: linear-gradient(135deg, #7f8c8d 0%, #95a5a6 100%);
 }
-/* 受注可能性: 斜線パターンで区別 */
-.gantt-bar.bar-tentative {
-  background-image: repeating-linear-gradient(
+/* ============================================================
+   受注可能性バー (Web表示用)
+   - 材料区分の色クラス(bar-supply/bar-materialwork/bar-other)が
+     先に当たっても、tentative の見た目で完全上書きする
+   - 背景: 薄いオレンジ + オレンジ斜線(可読性確保)
+   - 枠線: オレンジ破線
+   - 文字色: 濃い茶色(白だと薄オレンジ背景に同化するため)
+   - opacity/visibility は明示的に1で固定し、他CSSの影響を受けないようにする
+   - 凡例 .legend-color.bar-tentative にも同じ見た目が反映される
+   ============================================================ */
+.gantt-bar.bar-tentative,
+.bar-tentative {
+  /* 材料色のlinear-gradientを上書き */
+  background: repeating-linear-gradient(
     45deg,
-    rgba(255,255,255,0.25) 0,
-    rgba(255,255,255,0.25) 6px,
-    transparent 6px,
-    transparent 12px
-  );
+    #f39c12 0,
+    #f39c12 6px,
+    #fbe6c4 6px,
+    #fbe6c4 12px
+  ) !important;
+  background-color: #fff3cd !important;
+  color: #5c3b00 !important;
+  font-weight: 700 !important;
+  border: 2px dashed #b8740a !important;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.18) !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  text-shadow: 0 1px 0 rgba(255,255,255,0.6);
+  z-index: 8;
 }
-.gantt-bar.bar-tentative::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border: 1.5px dashed rgba(255,255,255,0.85);
-  border-radius: 4px;
-  pointer-events: none;
+/* バー内テキストは透明化されないように明示 */
+.gantt-bar.bar-tentative,
+.gantt-bar.bar-tentative * {
+  color: #5c3b00 !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+/* かつての ::before 枠線オーバーレイは完全に無効化 (コンテンツ重なり防止) */
+.gantt-bar.bar-tentative::before,
+.bar-tentative::before {
+  content: none !important;
+  display: none !important;
+}
+
+/* 凡例スウォッチ用 (高さ12pxでも斜線が視認できるよう調整) */
+.legend-color.bar-tentative {
+  background: repeating-linear-gradient(
+    45deg,
+    #f39c12 0,
+    #f39c12 4px,
+    #fbe6c4 4px,
+    #fbe6c4 8px
+  ) !important;
+  border: 1px dashed #b8740a !important;
+  box-shadow: none !important;
 }
 
 /* 凡例 */
