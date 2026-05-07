@@ -932,30 +932,41 @@ body.role-viewer .admin-only { display: none !important; }
 }
 .print-header .print-date { color: #6b7a8a; }
 
-/* 集計テーブル(印刷でも見やすく) */
+/* 集計テーブル(印刷・PDFでも罫線・色が消えないよう !important で固定) */
 .summary-table {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: collapse !important;
+  border-spacing: 0 !important;
   font-size: 13px;
   margin-top: 6px;
+  background: #ffffff;
+  -webkit-print-color-adjust: exact !important;
+  print-color-adjust: exact !important;
+}
+.summary-table,
+.summary-table th,
+.summary-table td {
+  border: 1px solid #c8d6e5 !important;
 }
 .summary-table th, .summary-table td {
   padding: 8px 10px;
-  border: 1px solid #cdd6e0;
   text-align: left;
   vertical-align: middle;
+  background-clip: padding-box;
+  -webkit-print-color-adjust: exact !important;
+  print-color-adjust: exact !important;
 }
 .summary-table thead th {
-  background: #1a4a7a;
-  color: #fff;
+  background: #1a4a7a !important;
+  color: #fff !important;
   font-weight: 700;
   text-align: center;
 }
 .summary-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .summary-table tfoot td {
-  background: #f4f6f8;
+  background: #f4f6f8 !important;
   font-weight: 700;
-  color: #1a4a7a;
+  color: #1a4a7a !important;
 }
 
 /* ============ 印刷時の色保持 (全モード共通) ============ */

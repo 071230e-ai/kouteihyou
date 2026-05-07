@@ -976,10 +976,8 @@
     const byManager = groupBy(rangeSites, s => s.manager || '(未設定)');
     // 構造別
     const byStructure = groupBy(rangeSites, s => s.structure || '(未設定)');
-    // 材料区分別
-    const byMaterial = groupBy(rangeSites, s => s.material || '(未設定)');
-    // 支給/材工別(集約)
-    const bySupplyType = groupSupplyType(rangeSites);
+    // 材料区分別 (現仕様: 「材工」「支給材」の2択)
+    const byMaterial = groupBy(rangeSites, s => normalizeMaterial(s.material) || '(未設定)');
 
     // 月別
     const monthly = months.map(() => ({ active: 0, qty: 0, amount: 0 }));
@@ -1009,7 +1007,7 @@
       }
     });
 
-    return { months, overall, byManager, byStructure, byMaterial, bySupplyType, monthly };
+    return { months, overall, byManager, byStructure, byMaterial, monthly };
   }
   function groupBy(arr, keyFn) {
     const map = {};
@@ -1022,31 +1020,12 @@
     });
     return Object.entries(map).sort((a, b) => b[1].amount - a[1].amount);
   }
-  function groupSupplyType(arr) {
-    // 「支給」「支給外」「材工」「労務」「材料」「その他」の集約
-    const buckets = {
-      '支給': { count: 0, qty: 0, amount: 0 },
-      '支給外': { count: 0, qty: 0, amount: 0 },
-      '材工': { count: 0, qty: 0, amount: 0 },
-      '労務': { count: 0, qty: 0, amount: 0 },
-      '材料': { count: 0, qty: 0, amount: 0 },
-      'その他': { count: 0, qty: 0, amount: 0 }
-    };
-    arr.forEach(s => {
-      const key = (s.material in buckets) ? s.material : 'その他';
-      buckets[key].count++;
-      buckets[key].qty += Number(s.quantity) || 0;
-      buckets[key].amount += Number(s.amount) || 0;
-    });
-    return Object.entries(buckets);
-  }
-
   // ---------- 集計画面 ----------
   function renderSummary() {
     const container = document.getElementById('summaryContent');
     if (!container) return;
     const data = computeSummary();
-    const { months, overall, byManager, byStructure, byMaterial, bySupplyType, monthly } = data;
+    const { months, overall, byManager, byStructure, byMaterial, monthly } = data;
 
     let html = '';
 
@@ -1094,40 +1073,8 @@
     // 材料区分別
     html += renderBreakdownTable('材料区分別 集計', '材料区分', byMaterial, 'material');
 
-    // 支給/材工別(固定区分)
-    html += `
-      <div class="summary-section">
-        <h3 class="summary-section-title">支給／材工別 集計</h3>
-        <table class="summary-table">
-          <thead>
-            <tr>
-              <th>区分</th>
-              <th class="num">現場数</th>
-              <th class="num">数量合計</th>
-              <th class="num">契約金額合計</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${bySupplyType.map(([k, v]) => `
-              <tr>
-                <td>${paramTag(k, materialClass(k))}</td>
-                <td class="num">${v.count} 件</td>
-                <td class="num">${v.qty.toLocaleString('ja-JP', { maximumFractionDigits: 2 })} t</td>
-                <td class="num">¥${fmtAmount(v.amount)}</td>
-              </tr>
-            `).join('')}
-          </tbody>
-          <tfoot>
-            <tr>
-              <td>合計</td>
-              <td class="num">${overall.totalCount} 件</td>
-              <td class="num">${overall.totalQty.toLocaleString('ja-JP', { maximumFractionDigits: 2 })} t</td>
-              <td class="num">¥${fmtAmount(overall.totalAmount)}</td>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-    `;
+    // ※ 旧仕様の「支給／材工別 集計」(支給/支給外/労務/材料/その他)は削除しました。
+    //   現在の材料区分は「材工」「支給材」の2択のため、上記の「材料区分別 集計」で網羅されます。
 
     // 月別
     const monthRows = monthly.map((d, i) => {
@@ -1647,6 +1594,89 @@
     html +=   `</tbody></table>`;
     html += `</div>`;
 
+    // 建物構造別
+    const byStructure = {};
+    filtered.forEach(s => {
+      const k = s.structure || '(未設定)';
+      if (!byStructure[k]) byStructure[k] = { count: 0, qty: 0, amount: 0 };
+      byStructure[k].count++;
+      byStructure[k].qty += Number(s.quantity) || 0;
+      byStructure[k].amount += Number(s.amount) || 0;
+    });
+    if (Object.keys(byStructure).length > 0) {
+      html += `<div class="pdf-summary-section">`;
+      html +=   `<h3 class="pdf-summary-title">建物構造別 集計</h3>`;
+      html +=   `<table class="pdf-stable"><thead><tr>`;
+      html +=     `<th style="width:25%">建物の構造</th><th style="width:25%">件数</th><th style="width:25%">数量</th><th style="width:25%">契約金額</th>`;
+      html +=   `</tr></thead><tbody>`;
+      Object.keys(byStructure).sort((a, b) => byStructure[b].amount - byStructure[a].amount).forEach(k => {
+        const d = byStructure[k];
+        const scls = structureClass(k);
+        html += `<tr>`;
+        html += `<td><span class="pdf-tag ${scls}">${escapeHtml(k)}</span></td>`;
+        html += `<td style="text-align:right">${d.count}件</td>`;
+        html += `<td style="text-align:right">${fmtTons(d.qty)}</td>`;
+        html += `<td style="text-align:right">¥${fmtAmount(d.amount)}</td>`;
+        html += `</tr>`;
+      });
+      html +=   `</tbody></table>`;
+      html += `</div>`;
+    }
+
+    // 月別 (画面と同じ12ヶ月分。日数で按分した参考値)
+    const months = buildMonthList(startYear, startMonth, 12);
+    const monthly = months.map(() => ({ active: 0, qty: 0, amount: 0 }));
+    filtered.forEach(s => {
+      const sd = toDate(s.startDate);
+      const ed = toDate(s.endDate);
+      if (!sd || !ed) return;
+      const segStart = sd < rangeStart ? rangeStart : sd;
+      const segEnd = ed > rangeEnd ? rangeEnd : ed;
+      const totalDays = Math.floor((segEnd - segStart) / 86400000) + 1;
+      const qty = Number(s.quantity) || 0;
+      const amt = Number(s.amount) || 0;
+      for (let i = 0; i < months.length; i++) {
+        const m = months[i];
+        const monthFirst = new Date(m.year, m.month, 1);
+        const monthLastDay = new Date(m.year, m.month + 1, 0).getDate();
+        const monthLast = new Date(m.year, m.month, monthLastDay, 23, 59, 59);
+        if (segEnd < monthFirst || segStart > monthLast) continue;
+        const a2 = segStart > monthFirst ? segStart : monthFirst;
+        const b2 = segEnd < monthLast ? segEnd : monthLast;
+        const dInMonth = Math.floor((b2 - a2) / 86400000) + 1;
+        const ratio = totalDays > 0 ? dInMonth / totalDays : 0;
+        monthly[i].active++;
+        monthly[i].qty += qty * ratio;
+        monthly[i].amount += amt * ratio;
+      }
+    });
+    const monthlyTotalQty = monthly.reduce((a, d) => a + d.qty, 0);
+    const monthlyTotalAmt = monthly.reduce((a, d) => a + d.amount, 0);
+    html += `<div class="pdf-summary-section">`;
+    html +=   `<h3 class="pdf-summary-title">月別 集計</h3>`;
+    html +=   `<table class="pdf-stable"><thead><tr>`;
+    html +=     `<th style="width:25%">月</th><th style="width:25%">稼働現場数</th><th style="width:25%">予定数量</th><th style="width:25%">契約金額合計</th>`;
+    html +=   `</tr></thead><tbody>`;
+    monthly.forEach((d, i) => {
+      const m = months[i];
+      html += `<tr>`;
+      html += `<td>${m.year}年${m.month + 1}月</td>`;
+      html += `<td style="text-align:right">${d.active}件</td>`;
+      html += `<td style="text-align:right">${fmtTons(d.qty)}</td>`;
+      html += `<td style="text-align:right">¥${fmtAmount(Math.round(d.amount))}</td>`;
+      html += `</tr>`;
+    });
+    html +=   `</tbody>`;
+    html +=   `<tfoot><tr>`;
+    html +=     `<td style="font-weight:700">合計</td>`;
+    html +=     `<td style="text-align:right;font-weight:700">—</td>`;
+    html +=     `<td style="text-align:right;font-weight:700">${fmtTons(monthlyTotalQty)}</td>`;
+    html +=     `<td style="text-align:right;font-weight:700">¥${fmtAmount(Math.round(monthlyTotalAmt))}</td>`;
+    html +=   `</tr></tfoot>`;
+    html +=   `</table>`;
+    html +=   `<p style="font-size:10px;color:#95a5a6;margin:6px 0 0">※ 数量・金額は工期日数で月按分した参考値です。</p>`;
+    html += `</div>`;
+
     area.innerHTML = html;
     return area;
   }
@@ -1778,7 +1808,8 @@
       activatePdfArea(area);
       await new Promise(r => setTimeout(r, 60));
       try {
-        const filename = `murata_summary_${rangeFileTag()}.pdf`;
+        // ファイル名: 集計表_2026年度_20260507.pdf 形式 (年度=表示開始年)
+        const filename = `集計表_${startYear}年度_${todayStr()}.pdf`;
         await capturePdf(area, filename, { orientation: 'landscape', format: 'a3' });
         showToast('集計PDFをダウンロードしました', 'success');
       } finally {
@@ -1874,7 +1905,7 @@
   // 集計CSV出力
   function exportSummaryCSV() {
     const data = computeSummary();
-    const { months, overall, byManager, byStructure, byMaterial, bySupplyType, monthly } = data;
+    const { months, overall, byManager, byStructure, byMaterial, monthly } = data;
     const lines = [];
 
     // ヘッダー(タイトル)
@@ -1917,14 +1948,6 @@
     lines.push(['【材料区分別集計】']);
     lines.push(['材料区分', '現場数', '数量合計(t)', '契約金額合計(円)']);
     byMaterial.forEach(([k, v]) => {
-      lines.push([k, v.count, v.qty.toFixed(3), v.amount]);
-    });
-    lines.push([]);
-
-    // 支給/材工別
-    lines.push(['【支給／材工別集計】']);
-    lines.push(['区分', '現場数', '数量合計(t)', '契約金額合計(円)']);
-    bySupplyType.forEach(([k, v]) => {
       lines.push([k, v.count, v.qty.toFixed(3), v.amount]);
     });
     lines.push([]);
