@@ -1346,12 +1346,11 @@
     return 'bar-other';
   }
 
-  // ========== 工程表PDF専用エリアの再描画(CSS Gridベース) ==========
-  // 仕様:
-  //  - position:absolute のガントバーは使わず、行ごとに CSS Grid を組んで
-  //    ガントバーは grid-column で開始月〜終了月を span する
-  //  - これにより html2canvas が「途中で切れたバー」を撮影することがなくなる
-  //  - 月リストは 12 ヶ月分(表示開始月〜+11ヶ月)
+  // ========== 工程表PDF専用エリアの再描画 ==========
+  // 方針:
+  //  - 画面と同じ <table class="schedule-table"> を生成し、画面側CSSをそのまま継承する
+  //  - PDF出力時の罫線崩れ対策として .pdf-clone-mode で border-collapse / box-shadow inset 等を上書き
+  //  - ガントバーは画面と同じ position:absolute (月セルtd内) で配置する
   function buildSchedulePdfDom() {
     const area = document.getElementById('pdfScheduleArea');
     if (!area) return null;
@@ -1373,105 +1372,95 @@
     html +=   `</div>`;
     html += `</div>`;
 
-    // ----- テーブル本体: pdf-grid > pdf-grid-row(8列+月12列) -----
-    html += `<div class="pdf-grid">`;
+    // ----- 画面と同じ schedule-table を組む -----
+    // 列幅: 番号 44 + 名前 240 + 担当 100 + 構造 110 + 数量 90 + 材料 100 + 金額 130 = 814px
+    // 月  : 12 * 75 = 900px  ⇒ 合計 1714px (PDF専用エリアは width:1720px に合わせる)
+    html += `<div class="pdf-clone-wrapper">`;
+    html += `<table class="schedule-table pdf-clone-schedule">`;
+    // colgroup で列幅を固定(PDF描画時に列幅が崩れないよう明示)
+    html += `<colgroup>`;
+    html +=   `<col style="width:32px">`;   // No
+    html +=   `<col style="width:44px">`;   // 番号
+    html +=   `<col style="width:240px">`;  // 名前
+    html +=   `<col style="width:100px">`;  // 担当
+    html +=   `<col style="width:110px">`;  // 構造
+    html +=   `<col style="width:90px">`;   // 数量
+    html +=   `<col style="width:100px">`;  // 材料
+    html +=   `<col style="width:130px">`;  // 金額
+    for (let i = 0; i < 12; i++) html += `<col style="width:75px">`; // 月セル
+    html += `</colgroup>`;
 
     // ヘッダ行
-    html += `<div class="pdf-grid-row pdf-grid-head">`;
-    html +=   `<div class="pdf-c-no">No</div>`;
-    html +=   `<div class="pdf-c-siteno">番号</div>`;
-    html +=   `<div class="pdf-c-name">現場名・工事内容</div>`;
-    html +=   `<div class="pdf-c-manager">担当</div>`;
-    html +=   `<div class="pdf-c-structure">構造</div>`;
-    html +=   `<div class="pdf-c-quantity">数量(t)</div>`;
-    html +=   `<div class="pdf-c-material">材料区分</div>`;
-    html +=   `<div class="pdf-c-amount">契約金額(円)</div>`;
-    // 月ヘッダ部分(grid-column: 9 / span 12 を占めるエリア)
-    html += `<div class="pdf-month-area">`;
-    months.forEach((m, i) => {
-      const isQEnd = ((i + 1) % 3 === 0) ? ' q-end' : '';
-      const isNewYear = (i === 0 || m.month === 0) ? ' month-newyear' : '';
-      html += `<div class="pdf-month-cell${isQEnd}${isNewYear}">${m.year}/${String(m.month + 1).padStart(2, '0')}</div>`;
+    html += `<thead><tr>`;
+    html +=   `<th class="col-no col-info">No</th>`;
+    html +=   `<th class="col-siteno col-info">番号</th>`;
+    html +=   `<th class="col-name col-info">現場名・工事内容</th>`;
+    html +=   `<th class="col-manager col-info">担当</th>`;
+    html +=   `<th class="col-structure col-info">構造</th>`;
+    html +=   `<th class="col-quantity col-info">数量</th>`;
+    html +=   `<th class="col-material col-info">材料区分</th>`;
+    html +=   `<th class="col-amount col-info">契約金額(円)</th>`;
+    months.forEach((ym, i) => {
+      const isQEnd = ((i + 1) % 3 === 0);
+      const isNewYear = (i === 0) || (ym.month === 0);
+      const cls = `col-month${isQEnd ? ' q-end' : ''}${isNewYear ? ' month-newyear' : ''}`;
+      html += `<th class="${cls}"><span class="month-year">${ym.year}年</span>${ym.month + 1}月</th>`;
     });
-    html += `</div>`;  // pdf-month-area 終
-    html += `</div>`;  // ヘッダ行終
+    html += `</tr></thead>`;
 
-    // ----- データ行 -----
-    html += `<div class="pdf-grid-body">`;
+    // ボディ
+    html += `<tbody>`;
     if (target.length === 0) {
-      html += `<div style="padding:30px;text-align:center;color:#6b7a8a;font-size:12px">表示期間(${escapeHtml(rangeLabel)})に該当する現場がありません。</div>`;
+      html += `<tr class="empty-row"><td colspan="20" style="text-align:center;padding:30px;color:#6b7a8a;font-size:12px;">表示期間(${escapeHtml(rangeLabel)})に該当する現場がありません。</td></tr>`;
     } else {
       target.forEach((s, idx) => {
+        // バーは画面と同じく computeBarSegment (セル内 % 配置) を使用
+        const barInfo = computeBarSegment(s, months);
+        const colorCls = barClassByMaterial(s.material);
+        const tentativeCls = (s.orderStatus === '受注可能性') ? ' bar-tentative' : '';
         const stStatus = deriveStatus(s);
-        const orderCls = pdfOrderBadgeClass(s.orderStatus || '');
-        const statusCls = pdfStatusBadgeClass(stStatus);
-        const matCls = pdfMaterialBadgeClass(s.material);
-        const tantoCls = tantoClass(s.manager);
-        const structCls = structureClass(s.structure);
+        const orderTag = paramTag(s.orderStatus || '', orderClass(s.orderStatus));
+        const statusTag = paramTag(stStatus, statusClass(stStatus));
 
-        // バーの色: 受注可能性が最優先(pdf-bar-possible)、次に材料区分
-        let barCls = 'pdf-bar-other';
-        if (s.orderStatus === '受注可能性') {
-          barCls = 'pdf-bar-possible';
-        } else if (stStatus === '完了') {
-          barCls = 'pdf-bar-complete';
-        } else if (stStatus === '遅れ') {
-          barCls = 'pdf-bar-delay';
-        } else {
-          const m = normalizeMaterial(s.material);
-          if (m === '材工')   barCls = 'pdf-bar-zaikou';
-          else if (m === '支給材') barCls = 'pdf-bar-shikyu';
+        let row = '<tr class="bar-row">';
+        row += `<td class="col-no col-info">${idx + 1}</td>`;
+        row += `<td class="col-siteno col-info">${(s.siteNo != null && s.siteNo !== '') ? s.siteNo : ''}</td>`;
+        row += `<td class="col-name col-info" title="${escapeAttr(s.name || '')}"><div class="name-cell"><span class="site-name-text">${escapeHtml(s.name || '')}</span><span class="name-tags">${statusTag}${orderTag}</span></div></td>`;
+        row += `<td class="col-manager col-info">${paramTag(s.manager || '', tantoClass(s.manager))}</td>`;
+        row += `<td class="col-structure col-info" title="${escapeAttr(s.structure || '')}">${paramTag(s.structure || '', structureClass(s.structure))}</td>`;
+        row += `<td class="col-quantity col-info">${escapeHtml(fmtTons(s.quantity))}</td>`;
+        row += `<td class="col-material col-info">${paramTag(normalizeMaterial(s.material) || '', materialClass(s.material))}</td>`;
+        row += `<td class="col-amount col-info">${fmtAmount(s.amount)}</td>`;
+
+        for (let i = 0; i < 12; i++) {
+          const ym = months[i];
+          const isQEnd = ((i + 1) % 3 === 0);
+          const isNewYear = (i === 0) || (ym.month === 0);
+          const cls = `col-month month-cell${isQEnd ? ' q-end' : ''}${isNewYear ? ' month-newyear' : ''}`;
+          let cellInner = '';
+          if (barInfo && barInfo.startIndex === i) {
+            const widthPct = (barInfo.spanMonths * 100) - (barInfo.startOffsetPct + barInfo.endOffsetPct);
+            const leftPct = barInfo.startOffsetPct;
+            const dateRange = `${fmtDateJP(s.startDate)}〜${fmtDateJP(s.endDate)}`;
+            const tip = `${s.name} / ${dateRange} / ${normalizeMaterial(s.material) || ''} / ${s.orderStatus || ''}`;
+            // ラベル: 現場名 + 数量 + 材料区分(画面は現場名だけだが、PDFはより情報量を保つ)
+            const labelParts = [];
+            if (s.name) labelParts.push(s.name);
+            labelParts.push(fmtTons(s.quantity));
+            const mm = normalizeMaterial(s.material);
+            if (mm) labelParts.push(mm);
+            const barLabel = labelParts.join('　');
+            cellInner = `<div class="gantt-bar ${colorCls}${tentativeCls}" style="left:${leftPct}%;width:${widthPct}%;" title="${escapeAttr(tip)}">${escapeHtml(barLabel)}</div>`;
+          }
+          row += `<td class="${cls}">${cellInner}</td>`;
         }
-
-        html += `<div class="pdf-grid-row">`;
-        html +=   `<div class="pdf-c-no">${idx + 1}</div>`;
-        html +=   `<div class="pdf-c-siteno">${(s.siteNo != null && s.siteNo !== '') ? s.siteNo : ''}</div>`;
-        // 現場名 + ステータス・受注区分タグ
-        html +=   `<div class="pdf-c-name">`;
-        html +=     `<div class="pdf-name-block">`;
-        html +=       `<div class="pdf-name-main" title="${escapeAttr(s.name || '')}">${escapeHtml(s.name || '')}</div>`;
-        html +=       `<div class="pdf-name-tags">`;
-        if (stStatus)      html += `<span class="pdf-badge ${statusCls}">${escapeHtml(stStatus)}</span>`;
-        if (s.orderStatus) html += `<span class="pdf-badge ${orderCls}">${escapeHtml(s.orderStatus)}</span>`;
-        html +=       `</div>`;
-        html +=     `</div>`;
-        html +=   `</div>`;
-        html +=   `<div class="pdf-c-manager"><span class="pdf-tag ${tantoCls}">${escapeHtml(s.manager || '')}</span></div>`;
-        html +=   `<div class="pdf-c-structure"><span class="pdf-tag ${structCls}">${escapeHtml(s.structure || '')}</span></div>`;
-        html +=   `<div class="pdf-c-quantity">${escapeHtml(fmtTons(s.quantity))}</div>`;
-        html +=   `<div class="pdf-c-material"><span class="pdf-badge ${matCls}">${escapeHtml(normalizeMaterial(s.material) || '')}</span></div>`;
-        html +=   `<div class="pdf-c-amount">¥${escapeHtml(fmtAmount(s.amount))}</div>`;
-
-        // 月セル + バー(同じ pdf-month-area 内に並ぶ)
-        html += `<div class="pdf-month-area">`;
-        // 12個の背景セル(枠線描画用)
-        months.forEach((m, i) => {
-          const isQEnd = ((i + 1) % 3 === 0) ? ' q-end' : '';
-          const isNewYear = (i === 0 || m.month === 0) ? ' month-newyear' : '';
-          html += `<div class="pdf-month-cell${isQEnd}${isNewYear}"></div>`;
-        });
-
-        // ガントバー(startDate と endDate から再計算 -> grid-column で span)
-        const barRange = getPdfBarRange(s, months);
-        if (barRange) {
-          const labelParts = [];
-          if (s.name) labelParts.push(s.name);
-          labelParts.push(fmtTons(s.quantity));
-          const m = normalizeMaterial(s.material);
-          if (m) labelParts.push(m);
-          const barLabel = labelParts.join('　');
-          // grid-column は 1-based。背景セルは 1〜12 列目を占めているので、
-          // バーは同じ pdf-month-area の grid 上で startIndex+1 〜 endIndex+2 をまたがる
-          const gridCol = `${barRange.startIndex + 1} / ${barRange.endIndex + 2}`;
-          html += `<div class="pdf-bar ${barCls}" style="grid-column:${gridCol};" title="${escapeAttr(barLabel)}">${escapeHtml(barLabel)}</div>`;
-        }
-        html += `</div>`;  // pdf-month-area 終
-
-        html += `</div>`;  // pdf-grid-row 終
+        row += '</tr>';
+        html += row;
       });
     }
-    html += `</div>`;  // pdf-grid-body 終
-    html += `</div>`;  // pdf-grid 終
+    html += `</tbody>`;
+    html += `</table>`;
+    html += `</div>`; // pdf-clone-wrapper
 
     area.innerHTML = html;
     return area;
@@ -1687,9 +1676,9 @@
     const orientation = opts.orientation || 'landscape';
     const format = opts.format || 'a3';
 
-    // 1) html2canvas で実描画(scale=2 高解像度)
+    // 1) html2canvas で実描画(scale=3 で罫線欠け対策、より高解像度)
     const canvas = await window.html2canvas(area, {
-      scale: 2,
+      scale: 3,
       useCORS: true,
       backgroundColor: '#ffffff',
       scrollX: 0,
@@ -1698,7 +1687,9 @@
       windowHeight: area.scrollHeight,
       width: area.scrollWidth,
       height: area.scrollHeight,
-      logging: false
+      logging: false,
+      letterRendering: true,
+      imageTimeout: 0
     });
 
     // 2) jsPDF で多ページ分割

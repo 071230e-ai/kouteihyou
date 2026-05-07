@@ -1287,18 +1287,18 @@ body.role-viewer .admin-only { display: none !important; }
      position:absolute \u306b\u4f9d\u5b58\u3057\u306a\u3044
    ============================================================ */
 
-/* PDF\u5c02\u7528\u30a8\u30ea\u30a2(\u753b\u9762\u5916\u914d\u7f6e\u3001display:none\u306f\u4f7f\u308f\u306a\u3044) */
+/* PDF専用エリア(画面外配置、display:noneは使わない) */
 .pdf-only-area {
   position: fixed;
   left: 0;
   top: 0;
-  width: 1600px;          /* PDF\u51fa\u529b\u30b9\u30c6\u30fc\u30b8\u306e\u56fa\u5b9a\u5e45 */
+  width: 1780px;          /* PDF出力ステージの固定幅: テーブル1714px + 余白・外枠 */
   background: #ffffff;
   color: #1a2332;
   font-family: 'Hiragino Sans', 'Yu Gothic', 'Meiryo', sans-serif;
   font-size: 12px;
   z-index: -1;
-  opacity: 0;             /* \u753b\u9762\u4e0a\u306f\u898b\u3048\u306a\u3044\u304c html2canvas \u306f\u63cf\u753b\u3067\u304d\u308b */
+  opacity: 0;             /* 画面上は見えないが html2canvas は描画できる */
   pointer-events: none;
   visibility: visible;
   -webkit-print-color-adjust: exact;
@@ -1609,3 +1609,206 @@ body.role-viewer .admin-only { display: none !important; }
   text-align: center;
 }
 .pdf-only-area .pdf-stable tbody tr:nth-child(even) td { background: #f6f9fc; }
+
+/* ============================================================
+   PDF出力用「画面と同じテーブル」モード (.pdf-clone-schedule)
+   - 画面の .schedule-table をそのまま継承(borderやcolor,gantt-bar等)
+   - html2canvas が罫線を取りこぼさないよう border + box-shadow inset を併用
+   - position: sticky を解除(html2canvas で破綻するため)
+   - 行の高さを左右で完全一致させる(table-layout: fixed)
+   ============================================================ */
+.pdf-only-area .pdf-clone-wrapper {
+  margin: 0 12px 12px;
+  background: #ffffff;
+  border: 2px solid #1a4a7a;            /* 外枠 (画面の .schedule-wrapper と揃える濃いめ) */
+  border-radius: 4px;
+  overflow: hidden;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+.pdf-only-area .schedule-table.pdf-clone-schedule {
+  width: 1714px;
+  min-width: 1714px;
+  table-layout: fixed;
+  border-collapse: collapse !important;
+  border-spacing: 0 !important;
+  font-size: 12px;
+  background: #ffffff;
+}
+
+/* セル共通: 罫線を実線で描く(box-shadow inset は html2canvas で破綻するため使わない) */
+.pdf-only-area .schedule-table.pdf-clone-schedule th,
+.pdf-only-area .schedule-table.pdf-clone-schedule td {
+  border-right: 1px solid #c8d6e5 !important;
+  border-bottom: 1px solid #c8d6e5 !important;
+  background-clip: padding-box;
+  vertical-align: middle;
+  padding: 6px 8px;
+  text-align: left;
+  height: 38px;
+  box-sizing: border-box;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+/* 一番左の列にも左罫線を入れる(border-collapse は左隣の右罫線を共有するので不要だが、PDFでは念のため) */
+.pdf-only-area .schedule-table.pdf-clone-schedule tr > th:first-child,
+.pdf-only-area .schedule-table.pdf-clone-schedule tr > td:first-child {
+  border-left: 1px solid #c8d6e5 !important;
+}
+.pdf-only-area .schedule-table.pdf-clone-schedule thead tr > th {
+  border-top: 1px solid #c8d6e5 !important;
+}
+
+/* ヘッダ: position:sticky を解除 (html2canvasで破綻する) */
+.pdf-only-area .schedule-table.pdf-clone-schedule thead th {
+  position: static !important;
+  top: auto !important;
+  background: #f4f6f8 !important;
+  color: #1a4a7a !important;
+  font-weight: 700;
+  text-align: center;
+  border-bottom: 2px solid #1a4a7a !important;
+  height: 36px;
+  padding: 6px 6px;
+}
+
+/* 月セル: 画面と同じく padding:0 で バー絶対配置を許可 */
+.pdf-only-area .schedule-table.pdf-clone-schedule td.col-month,
+.pdf-only-area .schedule-table.pdf-clone-schedule th.col-month {
+  padding: 0 !important;
+  text-align: center;
+  position: relative;
+}
+.pdf-only-area .schedule-table.pdf-clone-schedule th.col-month {
+  font-size: 11px;
+  line-height: 1.25;
+  padding: 4px 2px !important;
+}
+.pdf-only-area .schedule-table.pdf-clone-schedule th.col-month .month-year {
+  display: block;
+  font-size: 9px;
+  color: #6b7a8a;
+  font-weight: 600;
+}
+
+/* 月セル: PDFでは linear-gradient を使わず border-right(上で定義済) で罫線を出す */
+.pdf-only-area .schedule-table.pdf-clone-schedule td.month-cell {
+  background: #ffffff !important;
+  background-image: none !important;
+  height: 38px;
+}
+/* 四半期末: 太めの縦線 */
+.pdf-only-area .schedule-table.pdf-clone-schedule td.month-cell.q-end,
+.pdf-only-area .schedule-table.pdf-clone-schedule th.col-month.q-end {
+  border-right: 2px solid #8aa5c5 !important;
+}
+/* 年始め(月新年): 濃い縦線で年の区切り */
+.pdf-only-area .schedule-table.pdf-clone-schedule td.col-month.month-newyear,
+.pdf-only-area .schedule-table.pdf-clone-schedule th.col-month.month-newyear {
+  border-left: 2px solid #1a4a7a !important;
+}
+/* 左テーブル(col-info)→ガントチャート の境界を太い縦線で明示 */
+.pdf-only-area .schedule-table.pdf-clone-schedule th.col-amount,
+.pdf-only-area .schedule-table.pdf-clone-schedule td.col-amount {
+  border-right: 2px solid #1a4a7a !important;
+}
+
+/* 列ごとのテキスト整列 */
+.pdf-only-area .schedule-table.pdf-clone-schedule td.col-no,
+.pdf-only-area .schedule-table.pdf-clone-schedule th.col-no       { text-align: center !important; }
+.pdf-only-area .schedule-table.pdf-clone-schedule td.col-siteno,
+.pdf-only-area .schedule-table.pdf-clone-schedule th.col-siteno   { text-align: center !important; }
+.pdf-only-area .schedule-table.pdf-clone-schedule td.col-quantity,
+.pdf-only-area .schedule-table.pdf-clone-schedule th.col-quantity { text-align: right !important; }
+.pdf-only-area .schedule-table.pdf-clone-schedule td.col-material,
+.pdf-only-area .schedule-table.pdf-clone-schedule th.col-material { text-align: center !important; }
+.pdf-only-area .schedule-table.pdf-clone-schedule td.col-amount,
+.pdf-only-area .schedule-table.pdf-clone-schedule th.col-amount   { text-align: right !important; }
+.pdf-only-area .schedule-table.pdf-clone-schedule td.col-manager,
+.pdf-only-area .schedule-table.pdf-clone-schedule th.col-manager,
+.pdf-only-area .schedule-table.pdf-clone-schedule td.col-structure,
+.pdf-only-area .schedule-table.pdf-clone-schedule th.col-structure { text-align: center !important; }
+
+/* 偶数行の薄い縞模様(画面では背景色は付けていないが、PDFで読みやすくする) */
+.pdf-only-area .schedule-table.pdf-clone-schedule tbody tr:nth-child(even) td:not(.month-cell) {
+  background-color: #f6f9fc !important;
+}
+.pdf-only-area .schedule-table.pdf-clone-schedule tbody tr:nth-child(even) td.month-cell {
+  background: #f6f9fc !important;
+  background-image: none !important;
+}
+
+/* 現場名セル(タグ付き) */
+.pdf-only-area .schedule-table.pdf-clone-schedule .name-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  align-items: flex-start;
+  width: 100%;
+}
+.pdf-only-area .schedule-table.pdf-clone-schedule .site-name-text {
+  font-weight: 700;
+  font-size: 12px;
+  color: #1a2332;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.pdf-only-area .schedule-table.pdf-clone-schedule .name-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+/* paramTag を画面のままで使うため、PDF area 内でも .tag のスタイルが効くようにする
+   (画面側のグローバル .tag-* がそのまま継承される。border/print-color-adjustだけ補強) */
+.pdf-only-area .schedule-table.pdf-clone-schedule .tag {
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 9px;
+  white-space: nowrap;
+  display: inline-block;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+/* gantt-bar は画面のクラスをそのまま使うが、PDFでの欠け防止を補強 */
+.pdf-only-area .schedule-table.pdf-clone-schedule .gantt-bar {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 22px;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  padding: 0 6px;
+  font-size: 10px;
+  color: #ffffff;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.18);
+  z-index: 1;
+  border: 1px solid rgba(0,0,0,0.18);
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+/* gradientは html2canvas で割れることがあるため、PDFモードではフラット色に上書き */
+.pdf-only-area .schedule-table.pdf-clone-schedule .gantt-bar.bar-supply       { background: #2980b9 !important; }
+.pdf-only-area .schedule-table.pdf-clone-schedule .gantt-bar.bar-materialwork { background: #27ae60 !important; }
+.pdf-only-area .schedule-table.pdf-clone-schedule .gantt-bar.bar-other        { background: #7f8c8d !important; }
+/* 受注可能性: オレンジ斜線 (画面と同じビジュアル) */
+.pdf-only-area .schedule-table.pdf-clone-schedule .gantt-bar.bar-tentative {
+  background: repeating-linear-gradient(45deg, #f39c12 0, #f39c12 6px, #fbe6c4 6px, #fbe6c4 12px) !important;
+  color: #5a3a07 !important;
+  border: 1px dashed #b8740a !important;
+}
+.pdf-only-area .schedule-table.pdf-clone-schedule .gantt-bar.bar-tentative::before {
+  display: none;  /* 画面で重ねていた半透明レイヤーは PDF では不要 */
+}
