@@ -298,7 +298,7 @@ input, select, textarea { font-family: inherit; font-size: 15px; }
 }
 .schedule-table {
   width: 100%;
-  min-width: 1280px;
+  min-width: 1380px;
   border-collapse: collapse;
   table-layout: fixed;
   font-size: 13px;
@@ -327,13 +327,14 @@ input, select, textarea { font-family: inherit; font-size: 15px; }
 }
 
 /* 左側情報列 */
-.col-name      { width: 200px; min-width: 200px; }
-.col-manager   { width: 90px;  min-width: 90px; }
-.col-structure { width: 80px;  min-width: 80px; }
-.col-quantity  { width: 100px; min-width: 100px; text-align: right !important; }
-.col-contract  { width: 80px;  min-width: 80px; text-align: center !important; }
-.col-amount    { width: 120px; min-width: 120px; text-align: right !important; }
-.col-month     { width: 70px;  min-width: 70px; padding: 0 !important; position: relative; }
+.col-no        { width: 44px;  min-width: 44px;  text-align: center !important; }
+.col-name      { width: 220px; min-width: 220px; }
+.col-manager   { width: 100px; min-width: 100px; }
+.col-structure { width: 110px; min-width: 110px; }
+.col-quantity  { width: 90px;  min-width: 90px;  text-align: right !important; }
+.col-material  { width: 100px; min-width: 100px; text-align: center !important; }
+.col-amount    { width: 130px; min-width: 130px; text-align: right !important; }
+.col-month     { width: 70px;  min-width: 70px;  padding: 0 !important; position: relative; }
 
 .month-cell {
   height: 38px;
@@ -369,6 +370,27 @@ input, select, textarea { font-family: inherit; font-size: 15px; }
 }
 .bar-materialwork {
   background: linear-gradient(135deg, #16a085 0%, #2ecc71 100%);
+}
+.bar-other {
+  background: linear-gradient(135deg, #7f8c8d 0%, #95a5a6 100%);
+}
+/* 受注可能性: 斜線パターンで区別 */
+.gantt-bar.bar-tentative {
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(255,255,255,0.25) 0,
+    rgba(255,255,255,0.25) 6px,
+    transparent 6px,
+    transparent 12px
+  );
+}
+.gantt-bar.bar-tentative::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 1.5px dashed rgba(255,255,255,0.85);
+  border-radius: 4px;
+  pointer-events: none;
 }
 
 /* 凡例 */
@@ -451,6 +473,10 @@ input, select, textarea { font-family: inherit; font-size: 15px; }
 }
 .badge-supply { background: #2980b9; }
 .badge-materialwork { background: #16a085; }
+.badge-other { background: #7f8c8d; }
+.badge-confirmed { background: #16a085; }
+.badge-tentative { background: #e67e22; }
+.badge-material { background: #1a4a7a; }
 .empty-row td {
   text-align: center;
   padding: 40px;
@@ -509,6 +535,29 @@ textarea.form-input { resize: vertical; min-height: 60px; }
   border-radius: 6px;
   background: #fff;
   width: 70px;
+}
+.unit-fixed {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 14px;
+  border: 1px solid #cdd6e0;
+  border-radius: 6px;
+  background: #f4f6f8;
+  font-weight: 700;
+  color: #1a4a7a;
+  font-size: 16px;
+  min-width: 50px;
+}
+.radio-item input:checked + .radio-confirmed {
+  border-color: #16a085;
+  background: #16a085;
+  color: #fff;
+}
+.radio-item input:checked + .radio-tentative {
+  border-color: #e67e22;
+  background: #e67e22;
+  color: #fff;
 }
 .radio-group {
   display: flex;
@@ -698,36 +747,288 @@ body.role-viewer .admin-only { display: none !important; }
   .filter-input { min-width: 120px; }
 }
 
-/* ============ 印刷 ============ */
+/* ============================================================
+   パラメータ色分けタグ(画面・PDF・印刷で同じ色)
+   ============================================================ */
+.param-tag {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  line-height: 1.3;
+  letter-spacing: 0.02em;
+  border: 1px solid transparent;
+  /* 印刷時に背景色を維持 */
+  -webkit-print-color-adjust: exact !important;
+  print-color-adjust: exact !important;
+  color-adjust: exact !important;
+}
+
+/* 名前セル内のタグ並び */
+.name-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.name-cell .site-name-text {
+  font-weight: 600;
+}
+.name-tags {
+  display: inline-flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+/* 共通カラーパレット(濃いめ・文字白) */
+.palette-blue   { background: #2563eb; color: #fff; border-color: #1d4ed8; }
+.palette-green  { background: #16a34a; color: #fff; border-color: #15803d; }
+.palette-orange { background: #ea7c1d; color: #fff; border-color: #c2630c; }
+.palette-purple { background: #8b5cf6; color: #fff; border-color: #7c3aed; }
+.palette-teal   { background: #0d9488; color: #fff; border-color: #0f766e; }
+.palette-brown  { background: #92602b; color: #fff; border-color: #784d20; }
+.palette-navy   { background: #1e3a8a; color: #fff; border-color: #172554; }
+.palette-pink   { background: #db2777; color: #fff; border-color: #be185d; }
+.palette-cyan   { background: #0891b2; color: #fff; border-color: #0e7490; }
+.palette-indigo { background: #4f46e5; color: #fff; border-color: #4338ca; }
+.palette-olive  { background: #6b7c1d; color: #fff; border-color: #556213; }
+.palette-rose   { background: #e11d48; color: #fff; border-color: #be123c; }
+.palette-gray   { background: #6b7280; color: #fff; border-color: #4b5563; }
+
+/* 支給(青系) / 支給外(グレー〜オレンジ系) */
+.tag-shikyuu {
+  background: #2563eb;
+  color: #fff;
+  border-color: #1d4ed8;
+  -webkit-print-color-adjust: exact !important;
+  print-color-adjust: exact !important;
+}
+.tag-no-shikyuu {
+  background: #f59e0b;
+  color: #fff;
+  border-color: #d97706;
+  -webkit-print-color-adjust: exact !important;
+  print-color-adjust: exact !important;
+}
+
+/* 材工(緑系) / 労務(オレンジ系) / 材料(青系) */
+.tag-zaikou {
+  background: #16a34a;
+  color: #fff;
+  border-color: #15803d;
+  -webkit-print-color-adjust: exact !important;
+  print-color-adjust: exact !important;
+}
+.tag-roumu {
+  background: #ea7c1d;
+  color: #fff;
+  border-color: #c2630c;
+  -webkit-print-color-adjust: exact !important;
+  print-color-adjust: exact !important;
+}
+.tag-zairyou {
+  background: #1e40af;
+  color: #fff;
+  border-color: #1e3a8a;
+  -webkit-print-color-adjust: exact !important;
+  print-color-adjust: exact !important;
+}
+
+/* ステータス */
+.tag-status-michakushu { background: #9ca3af; color: #fff; border-color: #6b7280; } /* 未着手 グレー */
+.tag-status-sekouchu   { background: #2563eb; color: #fff; border-color: #1d4ed8; } /* 施工中 青 */
+.tag-status-kanryo     { background: #16a34a; color: #fff; border-color: #15803d; } /* 完了 緑 */
+.tag-status-chui       { background: #f59e0b; color: #fff; border-color: #d97706; } /* 注意 オレンジ */
+.tag-status-okure      { background: #dc2626; color: #fff; border-color: #b91c1c; } /* 遅れ 赤 */
+.tag-status-mikakutei  {                                                                /* 未確定 破線青 */
+  background: #dbeafe;
+  color: #1e40af;
+  border: 1.5px dashed #1e40af;
+}
+
+/* 受注区分 */
+.tag-order-confirmed { background: #1e3a8a; color: #fff; border-color: #172554; } /* 受注済 濃い青 */
+.tag-order-tentative {                                                              /* 可能性あり 薄オレンジ+破線 */
+  background: #fef3c7;
+  color: #92400e;
+  border: 1.5px dashed #d97706;
+}
+
+/* 材料区分セル内のタグ */
+.col-material .param-tag {
+  font-size: 11px;
+  padding: 3px 8px;
+}
+
+/* 集計テーブル内のタグ */
+.summary-table td .param-tag {
+  font-size: 12px;
+  padding: 3px 10px;
+}
+
+/* ============ 印刷ヘッダー(画面では非表示) ============ */
+.print-header {
+  display: none;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 2px solid #1a4a7a;
+}
+.print-header .print-company {
+  font-size: 14px;
+  color: #1a4a7a;
+  font-weight: 700;
+}
+.print-header .print-doc-title {
+  font-size: 22px;
+  color: #1a4a7a;
+  font-weight: 700;
+  margin: 4px 0 6px;
+}
+.print-header .print-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #2c3e50;
+}
+.print-header .print-date { color: #6b7a8a; }
+
+/* 集計テーブル(印刷でも見やすく) */
+.summary-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  margin-top: 6px;
+}
+.summary-table th, .summary-table td {
+  padding: 8px 10px;
+  border: 1px solid #cdd6e0;
+  text-align: left;
+  vertical-align: middle;
+}
+.summary-table thead th {
+  background: #1a4a7a;
+  color: #fff;
+  font-weight: 700;
+  text-align: center;
+}
+.summary-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.summary-table tfoot td {
+  background: #f4f6f8;
+  font-weight: 700;
+  color: #1a4a7a;
+}
+
+/* ============ 印刷時の色保持 (全モード共通) ============ */
 @media print {
-  @page {
-    size: A3 landscape;
-    margin: 10mm;
+  *, *::before, *::after {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    color-adjust: exact !important;
   }
-  body {
-    background: #fff;
-    font-size: 10px;
+  .param-tag {
+    /* 印刷でも背景色とボーダーを必ず維持 */
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    border-width: 1px !important;
+    box-shadow: none !important;
   }
-  .no-print { display: none !important; }
-  .app-main { padding: 0; }
-  .tab-panel { display: none !important; }
-  .tab-panel#tab-schedule { display: block !important; }
-  .schedule-wrapper { border: none; }
-  .schedule-scroll { overflow: visible !important; }
-  .schedule-table {
+  .gantt-bar {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+}
+
+/* ============ 印刷:工程表(A3横) ============ */
+@media print {
+  body.print-target-schedule { background: #fff; font-size: 10px; }
+  body.print-target-schedule .no-print { display: none !important; }
+  body.print-target-schedule .app-main { padding: 0; }
+  body.print-target-schedule .tab-panel { display: none !important; }
+  body.print-target-schedule .tab-panel#tab-schedule { display: block !important; }
+  body.print-target-schedule #schedulePrintHeader { display: block !important; }
+  body.print-target-schedule .schedule-wrapper { border: none; }
+  body.print-target-schedule .schedule-scroll { overflow: visible !important; }
+  body.print-target-schedule .schedule-table {
     min-width: 0 !important;
     width: 100% !important;
     font-size: 9px;
   }
-  .schedule-table th, .schedule-table td { padding: 4px 6px; }
-  .col-name      { width: 14%; }
-  .col-manager   { width: 6%; }
-  .col-structure { width: 5%; }
-  .col-quantity  { width: 7%; }
-  .col-contract  { width: 5%; }
-  .col-amount    { width: 8%; }
-  .col-month     { width: 4.6%; }
-  .gantt-bar { height: 16px; font-size: 8px; box-shadow: none; }
-  .schedule-print-title { display: block; }
-  .summary-bar, .filter-bar, .panel-header { display: none !important; }
+  body.print-target-schedule .schedule-table th,
+  body.print-target-schedule .schedule-table td { padding: 4px 6px; }
+  body.print-target-schedule .col-no        { width: 3%; }
+  body.print-target-schedule .col-name      { width: 14%; }
+  body.print-target-schedule .col-manager   { width: 7%; }
+  body.print-target-schedule .col-structure { width: 8%; }
+  body.print-target-schedule .col-quantity  { width: 6%; }
+  body.print-target-schedule .col-material  { width: 7%; }
+  body.print-target-schedule .col-amount    { width: 9%; }
+  body.print-target-schedule .col-month     { width: 3.83%; }
+  body.print-target-schedule .gantt-bar { height: 16px; font-size: 8px; box-shadow: none; }
+  body.print-target-schedule .param-tag {
+    font-size: 8px !important;
+    padding: 1px 5px !important;
+    border-radius: 8px !important;
+  }
+  body.print-target-schedule .col-material .param-tag {
+    font-size: 8px !important;
+    padding: 1px 5px !important;
+  }
+  body.print-target-schedule .name-cell { gap: 3px; }
+  body.print-target-schedule .name-tags .param-tag { font-size: 7px !important; padding: 1px 4px !important; }
+  body.print-target-schedule .schedule-legend { display: none !important; }
+  body.print-target-schedule .summary-bar,
+  body.print-target-schedule .filter-bar,
+  body.print-target-schedule .panel-header { display: none !important; }
+
+  body.print-target-schedule {
+    /* A3横向き */
+  }
+  body.print-target-schedule { page: scheduleA3; }
+  @page scheduleA3 { size: A3 landscape; margin: 10mm; }
+}
+
+/* ============ 印刷:集計表(A4縦) ============ */
+@media print {
+  body.print-target-summary { background: #fff; font-size: 11px; }
+  body.print-target-summary .no-print { display: none !important; }
+  body.print-target-summary .app-main { padding: 0; }
+  body.print-target-summary .tab-panel { display: none !important; }
+  body.print-target-summary .tab-panel#tab-summary { display: block !important; }
+  body.print-target-summary #summaryPrintHeader { display: block !important; }
+  body.print-target-summary .summary-section {
+    border: none;
+    padding: 0;
+    margin-bottom: 14px;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  body.print-target-summary .summary-section-title {
+    font-size: 13px;
+    border-bottom: 2px solid #1a4a7a;
+    padding-bottom: 4px;
+    margin-bottom: 6px;
+  }
+  body.print-target-summary .kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+  }
+  body.print-target-summary .kpi-card {
+    border: 1px solid #cdd6e0;
+    padding: 8px 10px;
+    background: #fff;
+  }
+  body.print-target-summary .kpi-label { font-size: 10px; }
+  body.print-target-summary .kpi-value { font-size: 14px; }
+  body.print-target-summary .summary-table { font-size: 10px; }
+  body.print-target-summary .summary-table th,
+  body.print-target-summary .summary-table td { padding: 4px 6px; }
+  body.print-target-summary .param-tag {
+    font-size: 9px !important;
+    padding: 2px 6px !important;
+  }
+  body.print-target-summary { page: summaryA4; }
+  @page summaryA4 { size: A4 portrait; margin: 12mm; }
 }

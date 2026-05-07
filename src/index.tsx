@@ -67,7 +67,7 @@ app.get('/', (c) => {
                 <i class="fas fa-print"></i> 印刷
               </button>
               <button id="btnPdf" class="btn btn-primary">
-                <i class="fas fa-file-pdf"></i> PDF出力
+                <i class="fas fa-file-pdf"></i> 工程表PDFをダウンロード
               </button>
             </div>
           </div>
@@ -79,27 +79,34 @@ app.get('/', (c) => {
           <div class="filter-bar no-print">
             <input type="text" id="filterName" class="filter-input" placeholder="🔍 現場名" />
             <input type="text" id="filterManager" class="filter-input" placeholder="👤 現場担当" />
-            <select id="filterStructure" class="filter-input">
-              <option value="">構造(全て)</option>
-              <option value="RC造">RC造</option>
-              <option value="S造">S造</option>
-              <option value="SRC造">SRC造</option>
-              <option value="木造基礎">木造基礎</option>
-              <option value="その他">その他</option>
-            </select>
-            <select id="filterContract" class="filter-input">
-              <option value="">契約区分(全て)</option>
-              <option value="支給材">支給材</option>
+            <input type="text" id="filterStructure" class="filter-input" placeholder="🏗 構造" />
+            <select id="filterMaterial" class="filter-input">
+              <option value="">材料区分(全て)</option>
               <option value="材工">材工</option>
+              <option value="支給材">支給材</option>
+            </select>
+            <select id="filterOrder" class="filter-input">
+              <option value="">受注状況(全て)</option>
+              <option value="受注済み">受注済み</option>
+              <option value="受注可能性">受注可能性</option>
             </select>
             <input type="number" id="filterAmountMin" class="filter-input" placeholder="金額下限(円)" />
             <input type="number" id="filterAmountMax" class="filter-input" placeholder="金額上限(円)" />
             <button id="btnFilterReset" class="btn btn-text">クリア</button>
           </div>
 
+          {/* 印刷用ヘッダー(画面非表示) */}
+          <div id="schedulePrintHeader" class="print-header">
+            <div class="print-company">村田鉄筋株式会社</div>
+            <div class="print-doc-title">年間工程表</div>
+            <div class="print-meta">
+              <span id="schedulePrintRange"></span>
+              <span class="print-date" id="schedulePrintDate"></span>
+            </div>
+          </div>
+
           {/* 工程表本体(ガントチャート) */}
           <div class="schedule-wrapper">
-            <div id="scheduleTitle" class="schedule-print-title"></div>
             <div class="schedule-scroll">
               <table id="scheduleTable" class="schedule-table">
                 <thead>
@@ -108,9 +115,11 @@ app.get('/', (c) => {
                 <tbody id="scheduleBody"></tbody>
               </table>
             </div>
-            <div class="schedule-legend">
-              <span class="legend-item"><span class="legend-color bar-supply"></span> 支給材</span>
-              <span class="legend-item"><span class="legend-color bar-materialwork"></span> 材工</span>
+            <div class="schedule-legend no-print">
+              <span class="legend-item"><span class="legend-color bar-supply"></span> 支給系</span>
+              <span class="legend-item"><span class="legend-color bar-materialwork"></span> 材工系</span>
+              <span class="legend-item"><span class="legend-color bar-other"></span> その他</span>
+              <span class="legend-item"><span class="legend-color bar-tentative"></span> 受注可能性</span>
             </div>
           </div>
         </section>
@@ -125,7 +134,17 @@ app.get('/', (c) => {
 
             <div class="form-grid">
               <div class="form-group">
-                <label class="form-label">現場名 <span class="required">*</span></label>
+                <label class="form-label">番号 <span class="required">*</span></label>
+                <input type="number" id="siteNo" class="form-input" placeholder="例：1, 2, 10, 20" min="1" step="1" />
+                <div class="form-help">未入力の場合は自動で採番されます(現在の最大番号+1)</div>
+                <div class="error-msg" data-for="siteNo"></div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">　</label>
+                <div style="padding:10px 0;font-size:12px;color:#6b7a8a">※ 番号順に工程表・集計に表示されます</div>
+              </div>
+              <div class="form-group form-group-full">
+                <label class="form-label">現場名・工事内容 <span class="required">*</span></label>
                 <input type="text" id="siteName" class="form-input" placeholder="例：〇〇マンション新築工事" />
                 <div class="error-msg" data-for="siteName"></div>
               </div>
@@ -139,26 +158,31 @@ app.get('/', (c) => {
 
               <div class="form-group">
                 <label class="form-label">建物の構造 <span class="required">*</span></label>
-                <select id="structure" class="form-input">
-                  <option value="">選択してください</option>
-                  <option value="RC造">RC造</option>
-                  <option value="S造">S造</option>
-                  <option value="SRC造">SRC造</option>
-                  <option value="木造基礎">木造基礎</option>
-                  <option value="その他">その他</option>
-                </select>
+                <input type="text" id="structure" class="form-input" placeholder="例：RC造 / S造 / SRC造 / マンションRC造 / 物流倉庫S造 / 耐震補強 / 橋梁 など" list="structureList" />
+                <datalist id="structureList">
+                  <option value="RC造" />
+                  <option value="S造" />
+                  <option value="SRC造" />
+                  <option value="WRC造" />
+                  <option value="木造基礎" />
+                  <option value="マンションRC造" />
+                  <option value="物流倉庫S造" />
+                  <option value="耐震補強" />
+                  <option value="橋梁" />
+                  <option value="土木構造物" />
+                  <option value="その他" />
+                </datalist>
+                <div class="form-help">よく使う候補が表示されます。自由に入力できます。</div>
                 <div class="error-msg" data-for="structure"></div>
               </div>
 
               <div class="form-group">
-                <label class="form-label">総数量 <span class="required">*</span></label>
+                <label class="form-label">総数量(t) <span class="required">*</span></label>
                 <div class="input-with-unit">
-                  <input type="number" id="quantity" class="form-input" placeholder="例：50000" step="0.01" />
-                  <select id="quantityUnit" class="unit-select">
-                    <option value="kg">kg</option>
-                    <option value="t">t</option>
-                  </select>
+                  <input type="number" id="quantity" class="form-input" placeholder="例：85.5" step="0.001" min="0" />
+                  <span class="unit-fixed">t</span>
                 </div>
+                <div class="form-help">トン(t)単位で入力してください。小数も可(例: 12.5t / 0.8t)</div>
                 <div class="error-msg" data-for="quantity"></div>
               </div>
 
@@ -175,18 +199,29 @@ app.get('/', (c) => {
               </div>
 
               <div class="form-group">
-                <label class="form-label">契約区分 <span class="required">*</span></label>
+                <label class="form-label">材料区分 <span class="required">*</span></label>
+                <select id="material" class="form-input">
+                  <option value="">選択してください</option>
+                  <option value="材工">材工</option>
+                  <option value="支給材">支給材</option>
+                </select>
+                <div class="form-help">「材工」または「支給材」を選択してください</div>
+                <div class="error-msg" data-for="material"></div>
+              </div>
+
+              <div class="form-group">
+                <label class="form-label">受注状況 <span class="required">*</span></label>
                 <div class="radio-group">
                   <label class="radio-item">
-                    <input type="radio" name="contractType" value="支給材" />
-                    <span class="radio-label radio-supply">支給材</span>
+                    <input type="radio" name="orderStatus" value="受注済み" />
+                    <span class="radio-label radio-confirmed">受注済み</span>
                   </label>
                   <label class="radio-item">
-                    <input type="radio" name="contractType" value="材工" />
-                    <span class="radio-label radio-materialwork">材工</span>
+                    <input type="radio" name="orderStatus" value="受注可能性" />
+                    <span class="radio-label radio-tentative">受注可能性</span>
                   </label>
                 </div>
-                <div class="error-msg" data-for="contractType"></div>
+                <div class="error-msg" data-for="orderStatus"></div>
               </div>
 
               <div class="form-group">
@@ -216,19 +251,21 @@ app.get('/', (c) => {
           <div class="panel-header">
             <h2 class="panel-title"><i class="fas fa-list"></i> 現場一覧</h2>
             <div class="panel-actions">
-              <input type="text" id="listSearch" class="filter-input" placeholder="🔍 現場名・担当で検索" />
+              <input type="text" id="listSearch" class="filter-input" placeholder="🔍 現場名・担当・構造で検索" />
             </div>
           </div>
           <div class="table-wrapper">
             <table class="data-table">
               <thead>
                 <tr>
-                  <th>現場名</th>
+                  <th>No</th>
+                  <th>現場名・工事内容</th>
                   <th>担当</th>
                   <th>構造</th>
-                  <th>総数量</th>
+                  <th>数量</th>
+                  <th>材料区分</th>
+                  <th>受注</th>
                   <th>工期</th>
-                  <th>契約区分</th>
                   <th class="th-amount">契約金額</th>
                   <th class="th-action">操作</th>
                 </tr>
@@ -240,13 +277,31 @@ app.get('/', (c) => {
 
         {/* ============ 集計タブ ============ */}
         <section id="tab-summary" class="tab-panel">
-          <div class="panel-header">
+          <div class="panel-header no-print">
             <h2 class="panel-title"><i class="fas fa-chart-bar"></i> 集計</h2>
             <div class="panel-actions">
               <label class="year-label">表示開始月：</label>
               <select id="summaryStartYear" class="year-select" aria-label="開始年"></select>
               <select id="summaryStartMonth" class="year-select" aria-label="開始月"></select>
               <span id="summaryRangeLabel" class="range-label"></span>
+              <button id="btnSummaryPrint" class="btn btn-secondary">
+                <i class="fas fa-print"></i> 集計印刷
+              </button>
+              <button id="btnSummaryPdf" class="btn btn-primary">
+                <i class="fas fa-file-pdf"></i> 集計PDFをダウンロード
+              </button>
+              <button id="btnSummaryCsv" class="btn btn-primary">
+                <i class="fas fa-file-csv"></i> 集計CSV出力
+              </button>
+            </div>
+          </div>
+          {/* 印刷用ヘッダー(画面非表示・印刷時のみ表示) */}
+          <div id="summaryPrintHeader" class="print-header">
+            <div class="print-company">村田鉄筋株式会社</div>
+            <div class="print-doc-title">年間工程表 集計表</div>
+            <div class="print-meta">
+              <span id="summaryPrintRange"></span>
+              <span class="print-date" id="summaryPrintDate"></span>
             </div>
           </div>
           <div id="summaryContent"></div>
@@ -260,27 +315,46 @@ app.get('/', (c) => {
           <div class="export-grid">
             <div class="export-card">
               <i class="fas fa-file-pdf export-icon" style="color:#c0392b"></i>
-              <h3>PDF / 印刷</h3>
-              <p>年間工程表をA3横向きで印刷・PDF保存</p>
-              <button id="btnExportPdf" class="btn btn-primary">PDF / 印刷</button>
+              <h3>工程表PDFをダウンロード</h3>
+              <p>年間工程表をA3横向きでPDFダウンロード</p>
+              <button id="btnExportPdf" class="btn btn-primary">
+                <i class="fas fa-file-pdf"></i> 工程表PDFをダウンロード
+              </button>
+            </div>
+            <div class="export-card">
+              <i class="fas fa-file-pdf export-icon" style="color:#8e44ad"></i>
+              <h3>集計PDFをダウンロード</h3>
+              <p>集計表をA4縦向きでPDFダウンロード</p>
+              <button id="btnExportSummaryPdfMain" class="btn btn-primary">
+                <i class="fas fa-file-pdf"></i> 集計PDFをダウンロード
+              </button>
             </div>
             <div class="export-card">
               <i class="fas fa-file-csv export-icon" style="color:#16a085"></i>
-              <h3>CSV出力</h3>
+              <h3>現場一覧 CSV出力</h3>
               <p>現場情報をCSV形式でダウンロード</p>
               <button id="btnExportCsv" class="btn btn-primary">CSVダウンロード</button>
             </div>
             <div class="export-card">
               <i class="fas fa-file-excel export-icon" style="color:#27ae60"></i>
-              <h3>Excel出力</h3>
+              <h3>現場一覧 Excel出力</h3>
               <p>現場情報をExcel(.xls)形式でダウンロード</p>
               <button id="btnExportExcel" class="btn btn-primary">Excelダウンロード</button>
+            </div>
+            <div class="export-card">
+              <i class="fas fa-chart-pie export-icon" style="color:#8e44ad"></i>
+              <h3>集計CSV出力</h3>
+              <p>集計表をCSV形式でダウンロード</p>
+              <button id="btnExportSummaryCsv" class="btn btn-secondary">
+                <i class="fas fa-file-csv"></i> 集計CSV
+              </button>
+              <button id="btnExportSummaryPdf" class="btn btn-secondary" style="margin-left:6px">PDF/印刷</button>
             </div>
             <div class="export-card">
               <i class="fas fa-database export-icon" style="color:#2980b9"></i>
               <h3>バックアップ(JSON)</h3>
               <p>全データのバックアップ / 復元</p>
-              <div style="display:flex;gap:8px;justify-content:center">
+              <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
                 <button id="btnExportJson" class="btn btn-secondary">エクスポート</button>
                 <button id="btnImportJson" class="btn btn-secondary">インポート</button>
                 <input type="file" id="jsonFileInput" accept=".json" style="display:none" />
