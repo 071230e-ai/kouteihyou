@@ -1199,6 +1199,18 @@
       document.getElementById('jsonFileInput').click();
     });
     document.getElementById('jsonFileInput').addEventListener('change', importJSON);
+
+    // ログアウトボタン
+    const btnLogout = document.getElementById('btnLogout');
+    if (btnLogout) {
+      btnLogout.addEventListener('click', async () => {
+        if (!confirm('ログアウトしますか?')) return;
+        try {
+          await fetch('/api/logout', { method: 'POST', credentials: 'same-origin' });
+        } catch (e) { /* ignore */ }
+        window.location.href = '/login';
+      });
+    }
   }
 
   function updatePrintDateLabels() {

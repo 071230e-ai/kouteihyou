@@ -1,7 +1,204 @@
 import { Hono } from 'hono'
+import { getCookie, setCookie, deleteCookie } from 'hono/cookie'
 import { renderer } from './renderer'
 
-const app = new Hono()
+type Bindings = {
+  LOGIN_PASSWORD?: string
+  SESSION_SECRET?: string
+  ASSETS?: Fetcher
+}
+
+const app = new Hono<{ Bindings: Bindings }>()
+
+// ============================================================
+// 認証 (パスワードログイン)
+// ============================================================
+const SESSION_COOKIE = 'murata_session'
+const SESSION_MAX_AGE = 60 * 60 * 24 // 24時間
+
+// 定数時間比較 (タイミング攻撃対策)
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false
+  let result = 0
+  for (let i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i)
+  }
+  return result === 0
+}
+
+function getPassword(c: any): string {
+  return (c.env && c.env.LOGIN_PASSWORD) || 'muratakouteihyou'
+}
+function getSecret(c: any): string {
+  return (c.env && c.env.SESSION_SECRET) || 'murata-kouteihyou-default-secret-2026'
+}
+
+// HMAC-SHA256 署名付きセッショントークン (userId.exp.sig)
+async function signSession(c: any, userId: string): Promise<string> {
+  const secret = getSecret(c)
+  const exp = Math.floor(Date.now() / 1000) + SESSION_MAX_AGE
+  const payload = `${userId}.${exp}`
+  const enc = new TextEncoder()
+  const key = await crypto.subtle.importKey(
+    'raw', enc.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
+  )
+  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(payload))
+  const sigB64 = btoa(String.fromCharCode(...new Uint8Array(sig)))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+  return `${payload}.${sigB64}`
+}
+
+async function verifySession(c: any, token: string | undefined): Promise<boolean> {
+  if (!token) return false
+  const parts = token.split('.')
+  if (parts.length !== 3) return false
+  const [userId, expStr, sig] = parts
+  const exp = parseInt(expStr, 10)
+  if (!Number.isFinite(exp) || exp < Math.floor(Date.now() / 1000)) return false
+  const secret = getSecret(c)
+  const enc = new TextEncoder()
+  const key = await crypto.subtle.importKey(
+    'raw', enc.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
+  )
+  const sigBuf = await crypto.subtle.sign('HMAC', key, enc.encode(`${userId}.${expStr}`))
+  const expectedB64 = btoa(String.fromCharCode(...new Uint8Array(sigBuf)))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+  return timingSafeEqual(sig, expectedB64)
+}
+
+async function isAuthenticated(c: any): Promise<boolean> {
+  return await verifySession(c, getCookie(c, SESSION_COOKIE))
+}
+
+// 認証ミドルウェア (公開パス以外は要認証)
+app.use('*', async (c, next) => {
+  const path = new URL(c.req.url).pathname
+  const publicPaths = ['/login', '/api/login', '/api/logout', '/favicon.svg']
+  if (publicPaths.includes(path)) return next()
+  if (await isAuthenticated(c)) {
+    // 認証済み: /static/* は Cloudflare Pages の静的アセット配信にフォワード
+    if (path.startsWith('/static/') && c.env && c.env.ASSETS) {
+      return c.env.ASSETS.fetch(c.req.raw)
+    }
+    return next()
+  }
+  // 未認証
+  const accept = c.req.header('accept') || ''
+  if (accept.includes('text/html')) return c.redirect('/login', 302)
+  return c.text('Unauthorized', 401)
+})
+
+// ログイン画面
+app.get('/login', (c) => {
+  return c.html(`<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ログイン - 村田鉄筋株式会社 年間工程表</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<style>
+*,*::before,*::after{box-sizing:border-box}
+html,body{margin:0;padding:0;height:100%}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans","Yu Gothic",Meiryo,sans-serif;background:linear-gradient(135deg,#1a4a7a 0%,#2c6ba6 50%,#1a4a7a 100%);display:flex;align-items:center;justify-content:center;min-height:100vh;color:#2c3e50}
+.login-card{width:92%;max-width:420px;background:#fff;border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.3),0 4px 12px rgba(0,0,0,.15);padding:40px 36px 32px}
+.login-header{text-align:center;margin-bottom:28px}
+.logo-mark{display:inline-flex;align-items:center;justify-content:center;width:64px;height:64px;border-radius:50%;background:linear-gradient(135deg,#1a4a7a,#2c6ba6);color:#fff;font-size:28px;font-weight:700;margin-bottom:14px;box-shadow:0 4px 12px rgba(26,74,122,.4)}
+.login-title{font-size:18px;font-weight:700;color:#1a4a7a;margin:0 0 4px 0}
+.login-subtitle{font-size:13px;color:#6b7a8a;margin:0}
+.form-group{margin-bottom:18px}
+.form-label{display:block;font-size:13px;font-weight:600;color:#2c3e50;margin-bottom:6px}
+.form-input{width:100%;padding:11px 14px;font-size:15px;border:1.5px solid #cdd6e0;border-radius:6px;outline:none;transition:border-color .15s,box-shadow .15s;font-family:inherit}
+.form-input:focus{border-color:#2c6ba6;box-shadow:0 0 0 3px rgba(44,107,166,.15)}
+.login-btn{width:100%;padding:12px 16px;font-size:15px;font-weight:600;color:#fff;background:linear-gradient(135deg,#1a4a7a,#2c6ba6);border:none;border-radius:6px;cursor:pointer;transition:transform .1s,box-shadow .15s,opacity .15s;margin-top:6px}
+.login-btn:hover{box-shadow:0 4px 12px rgba(26,74,122,.35)}
+.login-btn:active{transform:translateY(1px)}
+.login-btn:disabled{opacity:.6;cursor:not-allowed}
+.error-msg{display:none;background:#fdecea;color:#c0392b;border:1px solid #f5b7b1;border-radius:6px;padding:10px 12px;font-size:13px;margin-bottom:14px}
+.error-msg.show{display:block}
+.login-footer{text-align:center;margin-top:22px;padding-top:18px;border-top:1px solid #eef0f3;font-size:12px;color:#95a5a6}
+</style>
+</head>
+<body>
+<main class="login-card" role="main">
+  <div class="login-header">
+    <div class="logo-mark">村</div>
+    <h1 class="login-title">村田鉄筋株式会社</h1>
+    <p class="login-subtitle">年間工程表 管理システム</p>
+  </div>
+  <div id="errorMsg" class="error-msg" role="alert" aria-live="polite"></div>
+  <form id="loginForm" autocomplete="off" novalidate>
+    <div class="form-group">
+      <label for="passwordInput" class="form-label">パスワード</label>
+      <input type="password" id="passwordInput" name="password" class="form-input" placeholder="パスワードを入力" autocomplete="current-password" required autofocus />
+    </div>
+    <button type="submit" id="loginBtn" class="login-btn">ログイン</button>
+  </form>
+  <div class="login-footer">© Murata Tekkin Co., Ltd.</div>
+</main>
+<script>
+(function(){
+  var form=document.getElementById('loginForm');
+  var input=document.getElementById('passwordInput');
+  var btn=document.getElementById('loginBtn');
+  var errBox=document.getElementById('errorMsg');
+  function showError(m){errBox.textContent=m;errBox.classList.add('show');}
+  function hideError(){errBox.classList.remove('show');}
+  form.addEventListener('submit', async function(e){
+    e.preventDefault(); hideError();
+    var pw=input.value;
+    if(!pw){showError('パスワードを入力してください');return;}
+    btn.disabled=true; btn.textContent='認証中...';
+    try{
+      var res=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pw}),credentials:'same-origin'});
+      if(res.ok){window.location.href='/';return;}
+      var data=await res.json().catch(function(){return{};});
+      showError(data&&data.error?data.error:'パスワードが違います');
+    }catch(err){showError('通信エラーが発生しました');}
+    finally{btn.disabled=false; btn.textContent='ログイン'; input.select();}
+  });
+})();
+</script>
+</body>
+</html>`)
+})
+
+// ログインAPI
+app.post('/api/login', async (c) => {
+  let body: any = {}
+  try { body = await c.req.json() } catch { /* ignore */ }
+  const password = (body && body.password) || ''
+  if (typeof password !== 'string' || password.length === 0) {
+    return c.json({ error: 'パスワードを入力してください' }, 400)
+  }
+  const expected = getPassword(c)
+  if (!timingSafeEqual(password, expected)) {
+    await new Promise(r => setTimeout(r, 400)) // 簡易ブルートフォース対策
+    return c.json({ error: 'パスワードが違います' }, 401)
+  }
+  const token = await signSession(c, 'user')
+  setCookie(c, SESSION_COOKIE, token, {
+    httpOnly: true, sameSite: 'Lax', secure: true, path: '/', maxAge: SESSION_MAX_AGE
+  })
+  return c.json({ ok: true })
+})
+
+// ログアウト
+app.post('/api/logout', (c) => {
+  deleteCookie(c, SESSION_COOKIE, { path: '/' })
+  return c.json({ ok: true })
+})
+app.get('/api/logout', (c) => {
+  deleteCookie(c, SESSION_COOKIE, { path: '/' })
+  return c.redirect('/login', 302)
+})
+
+// 認証状態確認
+app.get('/api/auth/status', async (c) => {
+  return c.json({ authenticated: await isAuthenticated(c) })
+})
 
 app.use(renderer)
 
@@ -26,6 +223,9 @@ app.get('/', (c) => {
                 <option value="viewer">一般ユーザー(閲覧のみ)</option>
               </select>
             </div>
+            <button id="btnLogout" class="btn btn-secondary" style="margin-left:12px" title="ログアウト">
+              <i class="fas fa-sign-out-alt"></i> ログアウト
+            </button>
           </div>
         </div>
 
