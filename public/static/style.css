@@ -1,1 +1,733 @@
-h1 { font-family: Arial, Helvetica, sans-serif; }
+/* ============ 基本設定 ============ */
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Hiragino Kaku Gothic ProN",
+               "Yu Gothic", Meiryo, "Noto Sans JP", sans-serif;
+  background: #f4f6f8;
+  color: #2c3e50;
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-text-size-adjust: 100%;
+}
+button { font-family: inherit; cursor: pointer; }
+input, select, textarea { font-family: inherit; font-size: 15px; }
+
+/* ============ ヘッダー ============ */
+.app-header {
+  background: #fff;
+  border-bottom: 1px solid #dde3ea;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+.header-inner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 24px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.logo-mark {
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #1a4a7a 0%, #2c6da6 100%);
+  color: #fff;
+  font-size: 24px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 6px rgba(26,74,122,0.3);
+}
+.header-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  color: #1a4a7a;
+}
+.header-subtitle {
+  margin: 2px 0 0 0;
+  font-size: 12px;
+  color: #6b7a8a;
+}
+.role-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.role-label {
+  font-size: 13px;
+  color: #6b7a8a;
+}
+.role-select {
+  padding: 6px 10px;
+  border: 1px solid #cdd6e0;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 14px;
+}
+
+.range-label {
+  font-size: 13px;
+  color: #1a4a7a;
+  font-weight: 600;
+  padding: 0 4px;
+  white-space: nowrap;
+}
+.year-select {
+  padding: 7px 10px;
+  border: 1px solid #cdd6e0;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 14px;
+  min-width: 78px;
+}
+.year-label {
+  font-size: 13px;
+  color: #6b7a8a;
+  font-weight: 600;
+  white-space: nowrap;
+}
+/* 月ヘッダー(年表示) */
+.col-month .month-year {
+  display: block;
+  font-size: 10px;
+  color: #6b7a8a;
+  font-weight: 500;
+  line-height: 1;
+  margin-bottom: 2px;
+}
+.col-month.month-newyear {
+  border-left: 2px solid #1a4a7a;
+}
+.col-month.month-newyear .month-year {
+  color: #c0392b;
+  font-weight: 700;
+}
+
+/* ============ タブナビ ============ */
+.tab-nav {
+  display: flex;
+  gap: 0;
+  padding: 0 16px;
+  border-top: 1px solid #f0f3f6;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.tab-btn {
+  background: transparent;
+  border: none;
+  padding: 12px 20px;
+  font-size: 14px;
+  color: #6b7a8a;
+  border-bottom: 3px solid transparent;
+  white-space: nowrap;
+  transition: all 0.15s;
+  font-weight: 500;
+}
+.tab-btn:hover {
+  color: #1a4a7a;
+  background: #f7f9fc;
+}
+.tab-btn.active {
+  color: #1a4a7a;
+  border-bottom-color: #1a4a7a;
+  font-weight: 700;
+}
+.tab-btn i {
+  margin-right: 6px;
+}
+
+/* ============ メイン ============ */
+.app-main {
+  padding: 20px;
+  max-width: 100%;
+}
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.panel-title {
+  margin: 0;
+  font-size: 20px;
+  color: #1a4a7a;
+  font-weight: 700;
+}
+.panel-title i {
+  margin-right: 8px;
+}
+.panel-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* ============ ボタン ============ */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 16px;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  transition: all 0.15s;
+  text-decoration: none;
+}
+.btn-primary {
+  background: #1a4a7a;
+  color: #fff;
+}
+.btn-primary:hover { background: #143a60; }
+.btn-secondary {
+  background: #fff;
+  color: #1a4a7a;
+  border: 1px solid #cdd6e0;
+}
+.btn-secondary:hover { background: #f4f6f8; }
+.btn-danger {
+  background: #c0392b;
+  color: #fff;
+}
+.btn-danger:hover { background: #962d23; }
+.btn-text {
+  background: transparent;
+  color: #6b7a8a;
+  border: 1px solid #cdd6e0;
+}
+.btn-text:hover { background: #f4f6f8; color: #1a4a7a; }
+.btn-lg { padding: 12px 26px; font-size: 16px; }
+.btn-sm { padding: 5px 10px; font-size: 12px; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ============ サマリーバー ============ */
+.summary-bar {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.summary-card {
+  background: #fff;
+  border: 1px solid #e1e7ed;
+  border-radius: 8px;
+  padding: 12px 14px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.02);
+}
+.summary-label {
+  font-size: 12px;
+  color: #6b7a8a;
+  margin: 0 0 4px 0;
+}
+.summary-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: #1a4a7a;
+  margin: 0;
+}
+.summary-unit {
+  font-size: 12px;
+  color: #6b7a8a;
+  margin-left: 4px;
+  font-weight: 500;
+}
+
+/* ============ フィルタバー ============ */
+.filter-bar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+  background: #fff;
+  border: 1px solid #e1e7ed;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.filter-input {
+  padding: 7px 10px;
+  border: 1px solid #cdd6e0;
+  border-radius: 6px;
+  font-size: 13px;
+  background: #fff;
+  min-width: 140px;
+  flex: 1 1 140px;
+}
+.filter-input:focus {
+  outline: none;
+  border-color: #1a4a7a;
+  box-shadow: 0 0 0 2px rgba(26,74,122,0.15);
+}
+
+/* ============ 工程表(ガント) ============ */
+.schedule-wrapper {
+  background: #fff;
+  border: 1px solid #dde3ea;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.schedule-print-title {
+  display: none;
+  padding: 14px 18px 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: #1a4a7a;
+}
+.schedule-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  max-width: 100%;
+}
+.schedule-table {
+  width: 100%;
+  min-width: 1280px;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 13px;
+}
+.schedule-table th,
+.schedule-table td {
+  border-right: 1px solid #e1e7ed;
+  border-bottom: 1px solid #e1e7ed;
+  vertical-align: middle;
+  padding: 8px 10px;
+  text-align: left;
+}
+.schedule-table thead th {
+  background: #f4f6f8;
+  color: #1a4a7a;
+  font-weight: 700;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  text-align: center;
+  border-bottom: 2px solid #1a4a7a;
+}
+.schedule-table th.col-info,
+.schedule-table td.col-info {
+  text-align: left;
+}
+
+/* 左側情報列 */
+.col-name      { width: 200px; min-width: 200px; }
+.col-manager   { width: 90px;  min-width: 90px; }
+.col-structure { width: 80px;  min-width: 80px; }
+.col-quantity  { width: 100px; min-width: 100px; text-align: right !important; }
+.col-contract  { width: 80px;  min-width: 80px; text-align: center !important; }
+.col-amount    { width: 120px; min-width: 120px; text-align: right !important; }
+.col-month     { width: 70px;  min-width: 70px; padding: 0 !important; position: relative; }
+
+.month-cell {
+  height: 38px;
+  position: relative;
+  background-image: linear-gradient(to right, transparent calc(100% - 1px), #eef1f5 calc(100% - 1px));
+}
+.month-cell.q-end {
+  border-right: 2px solid #cdd6e0;
+}
+
+/* 工期バー */
+.bar-row { position: relative; }
+.gantt-bar {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 22px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  font-size: 11px;
+  color: #fff;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+  z-index: 1;
+}
+.bar-supply {
+  background: linear-gradient(135deg, #2980b9 0%, #3498db 100%);
+}
+.bar-materialwork {
+  background: linear-gradient(135deg, #16a085 0%, #2ecc71 100%);
+}
+
+/* 凡例 */
+.schedule-legend {
+  padding: 10px 16px;
+  display: flex;
+  gap: 20px;
+  border-top: 1px solid #e1e7ed;
+  background: #fafbfc;
+  font-size: 12px;
+  color: #6b7a8a;
+}
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.legend-color {
+  display: inline-block;
+  width: 28px;
+  height: 12px;
+  border-radius: 3px;
+}
+
+/* ナンバー行(月) */
+.amount-cell, .quantity-cell {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ============ 現場リスト ============ */
+.table-wrapper {
+  background: #fff;
+  border: 1px solid #dde3ea;
+  border-radius: 8px;
+  overflow: auto;
+}
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.data-table th {
+  background: #f4f6f8;
+  color: #1a4a7a;
+  font-weight: 700;
+  padding: 10px 12px;
+  text-align: left;
+  border-bottom: 2px solid #1a4a7a;
+  white-space: nowrap;
+}
+.data-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #eef1f5;
+  vertical-align: middle;
+}
+.data-table tr:hover td {
+  background: #f7fafd;
+}
+.data-table .th-amount,
+.data-table td.td-amount {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.data-table .th-action {
+  text-align: center;
+  width: 140px;
+}
+.action-cell {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+}
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+}
+.badge-supply { background: #2980b9; }
+.badge-materialwork { background: #16a085; }
+.empty-row td {
+  text-align: center;
+  padding: 40px;
+  color: #95a5a6;
+}
+
+/* ============ フォーム ============ */
+.site-form {
+  background: #fff;
+  border: 1px solid #dde3ea;
+  border-radius: 8px;
+  padding: 20px;
+  max-width: 1100px;
+}
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px 20px;
+}
+.form-group { display: flex; flex-direction: column; }
+.form-group-full { grid-column: 1 / -1; }
+.form-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #2c3e50;
+  margin-bottom: 6px;
+}
+.required { color: #c0392b; margin-left: 2px; }
+.form-input {
+  padding: 10px 12px;
+  border: 1px solid #cdd6e0;
+  border-radius: 6px;
+  font-size: 15px;
+  background: #fff;
+  width: 100%;
+  transition: border-color 0.15s;
+}
+.form-input:focus {
+  outline: none;
+  border-color: #1a4a7a;
+  box-shadow: 0 0 0 2px rgba(26,74,122,0.15);
+}
+.form-input.has-error {
+  border-color: #c0392b;
+  background: #fef5f4;
+}
+textarea.form-input { resize: vertical; min-height: 60px; }
+.input-with-unit {
+  display: flex;
+  gap: 6px;
+}
+.input-with-unit .form-input { flex: 1; }
+.unit-select {
+  padding: 10px 8px;
+  border: 1px solid #cdd6e0;
+  border-radius: 6px;
+  background: #fff;
+  width: 70px;
+}
+.radio-group {
+  display: flex;
+  gap: 10px;
+}
+.radio-item {
+  flex: 1;
+  cursor: pointer;
+}
+.radio-item input { display: none; }
+.radio-label {
+  display: block;
+  padding: 10px 14px;
+  border: 2px solid #cdd6e0;
+  border-radius: 6px;
+  text-align: center;
+  font-weight: 600;
+  font-size: 14px;
+  color: #6b7a8a;
+  background: #fff;
+  transition: all 0.15s;
+}
+.radio-item input:checked + .radio-supply {
+  border-color: #2980b9;
+  background: #2980b9;
+  color: #fff;
+}
+.radio-item input:checked + .radio-materialwork {
+  border-color: #16a085;
+  background: #16a085;
+  color: #fff;
+}
+.form-help {
+  font-size: 11px;
+  color: #95a5a6;
+  margin-top: 4px;
+}
+.error-msg {
+  font-size: 12px;
+  color: #c0392b;
+  margin-top: 4px;
+  min-height: 16px;
+}
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid #eef1f5;
+}
+
+/* ============ 集計画面 ============ */
+.summary-section {
+  background: #fff;
+  border: 1px solid #dde3ea;
+  border-radius: 8px;
+  padding: 18px;
+  margin-bottom: 16px;
+}
+.summary-section-title {
+  margin: 0 0 12px 0;
+  font-size: 16px;
+  color: #1a4a7a;
+  font-weight: 700;
+  border-bottom: 2px solid #1a4a7a;
+  padding-bottom: 6px;
+}
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+}
+.kpi-card {
+  background: linear-gradient(135deg, #f7fafd 0%, #fff 100%);
+  border: 1px solid #e1e7ed;
+  border-radius: 8px;
+  padding: 14px;
+}
+.kpi-label {
+  font-size: 12px;
+  color: #6b7a8a;
+  margin: 0 0 6px 0;
+}
+.kpi-value {
+  font-size: 22px;
+  font-weight: 700;
+  color: #1a4a7a;
+  margin: 0;
+}
+.kpi-unit {
+  font-size: 12px;
+  color: #6b7a8a;
+  margin-left: 3px;
+  font-weight: 500;
+}
+
+.mini-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.mini-table th, .mini-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #eef1f5;
+  text-align: left;
+}
+.mini-table th {
+  background: #f4f6f8;
+  font-weight: 700;
+  color: #1a4a7a;
+}
+.mini-table td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ============ 出力タブ ============ */
+.export-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+  max-width: 1100px;
+}
+.export-card {
+  background: #fff;
+  border: 1px solid #dde3ea;
+  border-radius: 8px;
+  padding: 22px 18px;
+  text-align: center;
+}
+.export-card h3 {
+  margin: 8px 0;
+  color: #1a4a7a;
+  font-size: 16px;
+}
+.export-card p {
+  font-size: 13px;
+  color: #6b7a8a;
+  margin: 0 0 12px 0;
+  min-height: 36px;
+}
+.export-icon {
+  font-size: 40px;
+  margin-bottom: 4px;
+}
+
+/* ============ トースト ============ */
+.toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%) translateY(80px);
+  background: #2c3e50;
+  color: #fff;
+  padding: 12px 22px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  z-index: 9999;
+  opacity: 0;
+  transition: all 0.3s ease;
+  pointer-events: none;
+}
+.toast.show {
+  transform: translateX(-50%) translateY(0);
+  opacity: 1;
+}
+.toast.success { background: #16a085; }
+.toast.error { background: #c0392b; }
+
+/* ============ 閲覧者モード ============ */
+body.role-viewer .admin-only { display: none !important; }
+
+/* ============ レスポンシブ ============ */
+@media (max-width: 768px) {
+  .app-main { padding: 12px; }
+  .header-inner { padding: 10px 14px; }
+  .header-title { font-size: 16px; }
+  .header-subtitle { font-size: 11px; }
+  .logo-mark { width: 40px; height: 40px; font-size: 20px; }
+  .panel-title { font-size: 17px; }
+  .form-grid { grid-template-columns: 1fr; }
+  .tab-btn { padding: 10px 14px; font-size: 13px; }
+  .summary-value { font-size: 17px; }
+  .filter-input { min-width: 120px; }
+}
+
+/* ============ 印刷 ============ */
+@media print {
+  @page {
+    size: A3 landscape;
+    margin: 10mm;
+  }
+  body {
+    background: #fff;
+    font-size: 10px;
+  }
+  .no-print { display: none !important; }
+  .app-main { padding: 0; }
+  .tab-panel { display: none !important; }
+  .tab-panel#tab-schedule { display: block !important; }
+  .schedule-wrapper { border: none; }
+  .schedule-scroll { overflow: visible !important; }
+  .schedule-table {
+    min-width: 0 !important;
+    width: 100% !important;
+    font-size: 9px;
+  }
+  .schedule-table th, .schedule-table td { padding: 4px 6px; }
+  .col-name      { width: 14%; }
+  .col-manager   { width: 6%; }
+  .col-structure { width: 5%; }
+  .col-quantity  { width: 7%; }
+  .col-contract  { width: 5%; }
+  .col-amount    { width: 8%; }
+  .col-month     { width: 4.6%; }
+  .gantt-bar { height: 16px; font-size: 8px; box-shadow: none; }
+  .schedule-print-title { display: block; }
+  .summary-bar, .filter-bar, .panel-header { display: none !important; }
+}
