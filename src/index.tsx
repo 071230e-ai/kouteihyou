@@ -179,8 +179,9 @@ app.post('/api/login', async (c) => {
     return c.json({ error: 'パスワードが違います' }, 401)
   }
   const token = await signSession(c, 'user')
+  // SameSite=None でクロスサイト iframe（プレビュー埋め込み等）でもクッキーを保持できるようにする
   setCookie(c, SESSION_COOKIE, token, {
-    httpOnly: true, sameSite: 'Lax', secure: true, path: '/', maxAge: SESSION_MAX_AGE
+    httpOnly: true, sameSite: 'None', secure: true, path: '/', maxAge: SESSION_MAX_AGE
   })
   return c.json({ ok: true })
 })

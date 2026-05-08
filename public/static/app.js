@@ -205,6 +205,14 @@
     if (!d) return '';
     return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
   }
+  // 工期表示: 「YYYY年M月～YYYY年M月」 (年+月のみ)。未入力時は '-'
+  function fmtPeriodYM(start, end) {
+    const sd = toDate(start);
+    const ed = toDate(end);
+    if (!sd && !ed) return '-';
+    const fmt = d => d ? `${d.getFullYear()}年${d.getMonth() + 1}月` : '-';
+    return `${fmt(sd)}〜${fmt(ed)}`;
+  }
   function fmtDateTimeJP(d) {
     return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   }
@@ -768,7 +776,7 @@
     }).sort(compareByNo);
 
     if (visible.length === 0) {
-      body.innerHTML = `<tr class="empty-row"><td colspan="19">表示期間(${getRangeLabel()})に該当する現場がありません。</td></tr>`;
+      body.innerHTML = `<tr class="empty-row"><td colspan="20">表示期間(${getRangeLabel()})に該当する現場がありません。</td></tr>`;
       renderSummaryBar(filtered);
       return;
     }
@@ -800,16 +808,20 @@
           const widthPct = (barInfo.spanMonths * 100) - (barInfo.startOffsetPct + barInfo.endOffsetPct);
           const leftPct = barInfo.startOffsetPct;
           const dateRange = `${fmtDateJP(s.startDate)}〜${fmtDateJP(s.endDate)}`;
+          const periodYM = fmtPeriodYM(s.startDate, s.endDate);
           const tip = `${s.name} / ${dateRange} / ${s.material || ''} / ${s.orderStatus || ''}`;
-          // バー内ラベル: 現場名 + 数量 + 材料区分(空白埋めなし、空はスキップ)
+          // バー内ラベル: 現場名 + 数量 + 材料区分 + 工期(YYYY年M月〜YYYY年M月) を 1つの文字列として表示
+          // (html2canvas の描画落ち回避のため、複数のspan・brは使用しない)
           const labelParts = [];
           if (s.name) labelParts.push(s.name);
           const tonsStr = fmtTons(s.quantity);
           if (tonsStr) labelParts.push(tonsStr);
           const mat = normalizeMaterial(s.material);
           if (mat) labelParts.push(mat);
-          const barLabel = labelParts.join('　');
-          cellInner = `<div class="gantt-bar ${colorCls}${tentativeCls}" style="left:${leftPct}%;width:${widthPct}%;" title="${escapeAttr(tip)}">${escapeHtml(barLabel)}</div>`;
+          const showPeriod = !!(s.startDate && s.endDate) && periodYM && periodYM !== '-';
+          if (showPeriod) labelParts.push(periodYM);
+          const fullLabel = labelParts.join('　');
+          cellInner = `<div class="gantt-bar ${colorCls}${tentativeCls}" style="left:${leftPct}%;width:${widthPct}%;" title="${escapeAttr(tip)}"><span class="bar-label">${escapeHtml(fullLabel)}</span></div>`;
         }
         row += `<td class="${cls}">${cellInner}</td>`;
       }
@@ -1340,21 +1352,21 @@
     html += `</div>`;
 
     // ----- 画面と同じ schedule-table を組む -----
-    // 列幅: 番号 44 + 名前 240 + 担当 100 + 構造 110 + 数量 90 + 材料 100 + 金額 130 = 814px
-    // 月  : 12 * 75 = 900px  ⇒ 合計 1714px (PDF専用エリアは width:1720px に合わせる)
+    // 列幅: No 32 + 番号 44 + 名前 220 + 担当 90 + 構造 100 + 数量 70 + 材料 90 + 金額 120 = 766px
+    // 月  : 12 * 70 = 840px  ⇒ 合計 1606px (PDF専用エリアは width:1780px に余裕あり)
     html += `<div class="pdf-clone-wrapper">`;
     html += `<table class="schedule-table pdf-clone-schedule">`;
     // colgroup で列幅を固定(PDF描画時に列幅が崩れないよう明示)
     html += `<colgroup>`;
     html +=   `<col style="width:32px">`;   // No
     html +=   `<col style="width:44px">`;   // 番号
-    html +=   `<col style="width:240px">`;  // 名前
-    html +=   `<col style="width:100px">`;  // 担当
-    html +=   `<col style="width:110px">`;  // 構造
-    html +=   `<col style="width:90px">`;   // 数量
-    html +=   `<col style="width:100px">`;  // 材料
-    html +=   `<col style="width:130px">`;  // 金額
-    for (let i = 0; i < 12; i++) html += `<col style="width:75px">`; // 月セル
+    html +=   `<col style="width:220px">`;  // 名前
+    html +=   `<col style="width:90px">`;   // 担当
+    html +=   `<col style="width:100px">`;  // 構造
+    html +=   `<col style="width:70px">`;   // 数量
+    html +=   `<col style="width:90px">`;   // 材料
+    html +=   `<col style="width:120px">`;  // 金額
+    for (let i = 0; i < 12; i++) html += `<col style="width:70px">`; // 月セル
     html += `</colgroup>`;
 
     // ヘッダ行
@@ -1378,7 +1390,7 @@
     // ボディ
     html += `<tbody>`;
     if (target.length === 0) {
-      html += `<tr class="empty-row"><td colspan="20" style="text-align:center;padding:30px;color:#6b7a8a;font-size:12px;">表示期間(${escapeHtml(rangeLabel)})に該当する現場がありません。</td></tr>`;
+      html += `<tr class="empty-row"><td colspan="21" style="text-align:center;padding:30px;color:#6b7a8a;font-size:12px;">表示期間(${escapeHtml(rangeLabel)})に該当する現場がありません。</td></tr>`;
     } else {
       target.forEach((s, idx) => {
         // バーは画面と同じく computeBarSegment (セル内 % 配置) を使用
@@ -1409,15 +1421,21 @@
             const widthPct = (barInfo.spanMonths * 100) - (barInfo.startOffsetPct + barInfo.endOffsetPct);
             const leftPct = barInfo.startOffsetPct;
             const dateRange = `${fmtDateJP(s.startDate)}〜${fmtDateJP(s.endDate)}`;
+            const periodYM = fmtPeriodYM(s.startDate, s.endDate);
             const tip = `${s.name} / ${dateRange} / ${normalizeMaterial(s.material) || ''} / ${s.orderStatus || ''}`;
-            // ラベル: 現場名 + 数量 + 材料区分(画面は現場名だけだが、PDFはより情報量を保つ)
+            // ラベル: 1行目 = 現場名 + 数量 + 材料区分 / 2行目 = 工期(YYYY年M月〜YYYY年M月)
             const labelParts = [];
             if (s.name) labelParts.push(s.name);
-            labelParts.push(fmtTons(s.quantity));
+            const tonsStr2 = fmtTons(s.quantity);
+            if (tonsStr2) labelParts.push(tonsStr2);
             const mm = normalizeMaterial(s.material);
             if (mm) labelParts.push(mm);
-            const barLabel = labelParts.join('　');
-            cellInner = `<div class="gantt-bar ${colorCls}${tentativeCls}" style="left:${leftPct}%;width:${widthPct}%;" title="${escapeAttr(tip)}">${escapeHtml(barLabel)}</div>`;
+            const showPeriod = !!(s.startDate && s.endDate) && periodYM && periodYM !== '-';
+            // PDF用: html2canvas が複数子要素のうち一方を描画落ちさせるバグを回避するため、
+            // 現場名・数量・材料区分・工期 を 1つの<span>内に1つの文字列としてまとめて出力する。
+            if (showPeriod) labelParts.push(periodYM);
+            const fullLabel = labelParts.join('　');
+            cellInner = `<div class="gantt-bar ${colorCls}${tentativeCls}" style="left:${leftPct}%;width:${widthPct}%;" title="${escapeAttr(tip)}"><span class="bar-label">${escapeHtml(fullLabel)}</span></div>`;
           }
           row += `<td class="${cls}">${cellInner}</td>`;
         }

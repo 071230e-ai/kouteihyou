@@ -331,9 +331,10 @@ input, select, textarea { font-family: inherit; font-size: 15px; }
 .col-name      { width: 220px; min-width: 220px; }
 .col-manager   { width: 100px; min-width: 100px; }
 .col-structure { width: 110px; min-width: 110px; }
-.col-quantity  { width: 90px;  min-width: 90px;  text-align: right !important; }
-.col-material  { width: 100px; min-width: 100px; text-align: center !important; }
-.col-amount    { width: 130px; min-width: 130px; text-align: right !important; }
+.col-quantity  { width: 80px;  min-width: 80px;  text-align: right !important; }
+.col-period    { width: 130px; min-width: 130px; text-align: center !important; font-size: 11.5px; line-height: 1.35; word-break: keep-all; overflow-wrap: break-word; }
+.col-material  { width: 90px;  min-width: 90px;  text-align: center !important; }
+.col-amount    { width: 120px; min-width: 120px; text-align: right !important; }
 .col-month     { width: 70px;  min-width: 70px;  padding: 0 !important; position: relative; }
 
 .month-cell {
@@ -351,19 +352,66 @@ input, select, textarea { font-family: inherit; font-size: 15px; }
   position: absolute;
   top: 50%;
   transform: translateY(-50%);
-  height: 22px;
+  /* 単一テキスト(現場名+数量+材料+工期)を収める。
+     バーが狭い場合は文字がバー右側にはみ出してもよい(省略しない) */
+  min-height: 24px;
+  height: 24px;
   border-radius: 4px;
   display: flex;
   align-items: center;
-  padding: 0 8px;
+  justify-content: flex-start;  /* 左寄せ。はみ出しは右側へ */
+  padding: 0 4px;               /* バー内padding最小化、ラベル側で余白を取る */
   font-size: 11px;
-  color: #fff;
+  color: #0f172a;
   font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  line-height: 1.25;
+  overflow: visible !important;     /* 文字をはみ出しさせる */
+  white-space: nowrap !important;
+  text-overflow: clip !important;    /* "..." を出さない */
   box-shadow: 0 1px 3px rgba(0,0,0,0.15);
-  z-index: 1;
+  z-index: 20;                       /* 月セルの罫線より前面に */
+}
+/* バー内ラベル: 現場名+数量+材料+工期 を 1つの文字列として表示。
+   バー幅を超えても "..." 省略せず、右側へはみ出して全文表示する。
+   文字部分のみに半透明の白背景 + 角丸 + パディング を付け、
+   罫線・斜線・別の色背景と重なっても文字を読みやすくする。 */
+.gantt-bar .bar-label,
+.gantt-bar span {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+  text-align: left;
+  white-space: nowrap !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  max-width: none !important;
+  color: #0f172a;                                   /* ラベル文字色: 濃紺 */
+  background-color: rgba(255, 255, 255, 0.88);      /* 文字部分にだけ半透明白背景 */
+  padding: 1px 6px;
+  border-radius: 4px;
+  position: relative;
+  z-index: 30;                                      /* バー本体 + 罫線より前面 */
+  text-shadow: none;
+  pointer-events: none;
+  /* バー内に収まっている文字側の見やすさを確保するため、白背景に薄い縁線 */
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.4) inset;
+}
+/* 受注可能性(tentative): オレンジ斜線バーでは特に文字が見えにくいため、
+   背景の白を少し濃くし(不透明度UP)、文字はそのまま濃紺で確実に読める色に */
+.gantt-bar.bar-tentative .bar-label,
+.gantt-bar.bar-tentative span {
+  color: #0f172a !important;
+  background-color: rgba(255, 255, 255, 0.95) !important;  /* ほぼ不透明な白 */
+  text-shadow: none !important;
+  box-shadow: 0 0 0 1px rgba(184,116,10,0.25) inset !important;
+}
+
+/* バー内文字がバー外へはみ出ても表示されるよう、月セルとスクロール枠の clipping を解除 */
+.schedule-table td,
+.schedule-table td.month-cell,
+.schedule-table .bar-row td {
+  overflow: visible !important;
 }
 .bar-supply {
   background: linear-gradient(135deg, #2980b9 0%, #3498db 100%);
@@ -1007,14 +1055,17 @@ body.role-viewer .admin-only { display: none !important; }
   body.print-target-schedule .schedule-table th,
   body.print-target-schedule .schedule-table td { padding: 4px 6px; }
   body.print-target-schedule .col-no        { width: 3%; }
-  body.print-target-schedule .col-name      { width: 14%; }
-  body.print-target-schedule .col-manager   { width: 7%; }
-  body.print-target-schedule .col-structure { width: 8%; }
-  body.print-target-schedule .col-quantity  { width: 6%; }
-  body.print-target-schedule .col-material  { width: 7%; }
-  body.print-target-schedule .col-amount    { width: 9%; }
-  body.print-target-schedule .col-month     { width: 3.83%; }
-  body.print-target-schedule .gantt-bar { height: 16px; font-size: 8px; box-shadow: none; }
+  body.print-target-schedule .col-name      { width: 13%; }
+  body.print-target-schedule .col-manager   { width: 6.5%; }
+  body.print-target-schedule .col-structure { width: 7%; }
+  body.print-target-schedule .col-quantity  { width: 5%; }
+  body.print-target-schedule .col-material  { width: 6%; }
+  body.print-target-schedule .col-amount    { width: 7.5%; }
+  body.print-target-schedule .col-month     { width: 3.66%; }
+  /* 印刷時バー: 単一テキスト(現場名+数量+材料+工期)を1つのspanで表示 */
+  body.print-target-schedule .gantt-bar { min-height: 16px; height: 16px; font-size: 8px; box-shadow: none; padding: 1px 4px; line-height: 1.15; overflow: visible !important; white-space: nowrap !important; text-overflow: clip !important; z-index: 10; }
+  body.print-target-schedule .gantt-bar .bar-label { font-size: 8px; line-height: 1.15; overflow: visible !important; white-space: nowrap !important; text-overflow: clip !important; max-width: none !important; }
+  body.print-target-schedule .schedule-table td { overflow: visible !important; }
   body.print-target-schedule .param-tag {
     font-size: 8px !important;
     padding: 1px 5px !important;
@@ -1341,7 +1392,7 @@ body.role-viewer .admin-only { display: none !important; }
   position: fixed;
   left: 0;
   top: 0;
-  width: 1780px;          /* PDF出力ステージの固定幅: テーブル1714px + 余白・外枠 */
+  width: 1800px;          /* PDF出力ステージの固定幅: テーブル1736px + 余白・外枠(工期列追加で拡張) */
   background: #ffffff;
   color: #1a2332;
   font-family: 'Hiragino Sans', 'Yu Gothic', 'Meiryo', sans-serif;
@@ -1677,14 +1728,15 @@ body.role-viewer .admin-only { display: none !important; }
 }
 
 .pdf-only-area .schedule-table.pdf-clone-schedule {
-  width: 1714px;
-  min-width: 1714px;
+  width: 1736px;
+  min-width: 1736px;
   table-layout: fixed;
   border-collapse: collapse !important;
   border-spacing: 0 !important;
   font-size: 12px;
   background: #ffffff;
 }
+/* (旧) 工期セルのスタイルは削除しました。工期はガントバー内に表示します。 */
 
 /* セル共通: 罫線を実線で描く(box-shadow inset は html2canvas で破綻するため使わない) */
 .pdf-only-area .schedule-table.pdf-clone-schedule th,
@@ -1826,7 +1878,11 @@ body.role-viewer .admin-only { display: none !important; }
   line-height: 1.4;
 }
 
-/* gantt-bar は画面のクラスをそのまま使うが、PDFでの欠け防止を補強 */
+/* gantt-bar は画面のクラスをそのまま使うが、PDFでの欠け防止を補強。
+   html2canvas のテキスト描画落ちバグを回避するため、
+   バー内ラベルは 1つの<span class="bar-label">のみで、改行・複数子要素を作らない。
+   現場名+数量+材料+工期 を全角スペース区切りの 1 文字列としてレンダリングする。
+   バー幅が短い場合は省略せず、右側にはみ出して全文表示する。 */
 .pdf-only-area .schedule-table.pdf-clone-schedule .gantt-bar {
   position: absolute;
   top: 50%;
@@ -1835,18 +1891,60 @@ body.role-viewer .admin-only { display: none !important; }
   border-radius: 3px;
   display: flex;
   align-items: center;
-  padding: 0 6px;
-  font-size: 10px;
-  color: #ffffff;
+  justify-content: flex-start;
+  padding: 0 4px;
+  font-size: 9.5px;
+  color: #0f172a;
   font-weight: 700;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  line-height: 14px;
+  overflow: visible !important;     /* 文字をはみ出しさせる */
+  white-space: nowrap !important;
+  text-overflow: clip !important;    /* "..." を出さない */
   box-shadow: 0 1px 2px rgba(0,0,0,0.18);
-  z-index: 1;
+  z-index: 20;                       /* 罫線より前面に */
   border: 1px solid rgba(0,0,0,0.18);
+  text-align: left;
   -webkit-print-color-adjust: exact;
   print-color-adjust: exact;
+  box-sizing: border-box;
+}
+/* PDF: バー内ラベル — 文字部分のみに半透明白背景 + パディング + 角丸を付与 */
+.pdf-only-area .schedule-table.pdf-clone-schedule .gantt-bar .bar-label,
+.pdf-only-area .schedule-table.pdf-clone-schedule .gantt-bar span {
+  display: inline-block;
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 14px;
+  color: #0f172a;
+  background-color: rgba(255, 255, 255, 0.92);
+  white-space: nowrap !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  max-width: none !important;
+  width: auto;
+  padding: 1px 5px;
+  border-radius: 3px;
+  text-align: left;
+  vertical-align: middle;
+  position: relative;
+  z-index: 30;
+  text-shadow: none;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.4) inset;
+}
+/* 受注可能性(tentative)バー: オレンジ斜線が透けないよう、ほぼ不透明な白背景にする */
+.pdf-only-area .schedule-table.pdf-clone-schedule .gantt-bar.bar-tentative .bar-label,
+.pdf-only-area .schedule-table.pdf-clone-schedule .gantt-bar.bar-tentative span {
+  color: #0f172a !important;
+  background-color: rgba(255, 255, 255, 0.97) !important;
+  text-shadow: none !important;
+  box-shadow: 0 0 0 1px rgba(184,116,10,0.3) inset !important;
+}
+/* PDFクローン側でも月セル/td の clipping を解除し、はみ出し文字を保持 */
+.pdf-only-area .schedule-table.pdf-clone-schedule td,
+.pdf-only-area .schedule-table.pdf-clone-schedule td.month-cell {
+  overflow: visible !important;
 }
 /* gradientは html2canvas で割れることがあるため、PDFモードではフラット色に上書き */
 .pdf-only-area .schedule-table.pdf-clone-schedule .gantt-bar.bar-supply       { background: #2980b9 !important; }
