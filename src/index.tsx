@@ -6,6 +6,7 @@ type Bindings = {
   LOGIN_PASSWORD?: string
   SESSION_SECRET?: string
   ASSETS?: Fetcher
+  DB: D1Database
 }
 
 const app = new Hono<{ Bindings: Bindings }>()
@@ -199,6 +200,211 @@ app.get('/api/logout', (c) => {
 // 認証状態確認
 app.get('/api/auth/status', async (c) => {
   return c.json({ authenticated: await isAuthenticated(c) })
+})
+
+// ============================================================
+// 現場データ API (Cloudflare D1)
+// 全デバイスから同じデータを共有するためのCRUDエンドポイント
+// ============================================================
+type SiteRow = {
+  id: string
+  site_no: number | null
+  name: string
+  manager: string
+  structure: string
+  quantity: number
+  material: string
+  order_status: string
+  start_date: string | null
+  end_date: string | null
+  amount: number
+  memo: string
+  created_at: string
+  updated_at: string
+}
+
+// DBの行をフロントが扱う JS オブジェクトへ変換
+function rowToSite(r: SiteRow) {
+  return {
+    id: r.id,
+    siteNo: r.site_no,
+    no: r.site_no, // 互換用
+    name: r.name || '',
+    manager: r.manager || '',
+    structure: r.structure || '',
+    quantity: Number(r.quantity) || 0,
+    material: r.material || '',
+    zairyou: r.material || '',          // 互換用
+    orderStatus: r.order_status || '受注済み',
+    startDate: r.start_date || '',
+    endDate: r.end_date || '',
+    amount: Number(r.amount) || 0,
+    memo: r.memo || '',
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  }
+}
+
+// 入力値のサニタイズ (POST/PUT 共通)
+function sanitizeSiteInput(b: any) {
+  const toStr = (v: any) => (v === null || v === undefined) ? '' : String(v)
+  const toNumOrNull = (v: any) => {
+    if (v === null || v === undefined || v === '') return null
+    const n = Number(v)
+    return Number.isFinite(n) ? Math.floor(n) : null
+  }
+  const toNum = (v: any) => {
+    if (v === null || v === undefined || v === '') return 0
+    const n = Number(v)
+    return Number.isFinite(n) ? n : 0
+  }
+  const toDateOrNull = (v: any) => {
+    const s = toStr(v).trim()
+    return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null
+  }
+  // 番号: siteNo / no どちらでも受ける
+  const noRaw = (b && b.siteNo !== undefined) ? b.siteNo : (b && b.no)
+  const material = toStr((b && (b.material ?? b.zairyou))).trim()
+  const orderStatus = toStr(b && b.orderStatus).trim() || '受注済み'
+  return {
+    site_no: toNumOrNull(noRaw),
+    name: toStr(b && b.name).trim(),
+    manager: toStr(b && b.manager).trim(),
+    structure: toStr(b && b.structure).trim(),
+    quantity: toNum(b && b.quantity),
+    material: material,
+    order_status: orderStatus,
+    start_date: toDateOrNull(b && b.startDate),
+    end_date: toDateOrNull(b && b.endDate),
+    amount: toNum(b && b.amount),
+    memo: toStr(b && b.memo),
+  }
+}
+
+// 一覧取得: No順 (NULL は末尾、同 No は created_at 古い順)
+app.get('/api/sites', async (c) => {
+  try {
+    const { results } = await c.env.DB.prepare(
+      `SELECT id, site_no, name, manager, structure, quantity, material,
+              order_status, start_date, end_date, amount, memo,
+              created_at, updated_at
+       FROM sites
+       ORDER BY
+         CASE WHEN site_no IS NULL THEN 1 ELSE 0 END ASC,
+         site_no ASC,
+         created_at ASC`
+    ).all<SiteRow>()
+    return c.json({ ok: true, sites: (results || []).map(rowToSite) })
+  } catch (e: any) {
+    return c.json({ ok: false, error: String(e && e.message || e) }, 500)
+  }
+})
+
+// 1件取得 (動作確認用 / 互換)
+app.get('/api/sites/:id', async (c) => {
+  const id = c.req.param('id')
+  const row = await c.env.DB.prepare(
+    `SELECT * FROM sites WHERE id = ?`
+  ).bind(id).first<SiteRow>()
+  if (!row) return c.json({ ok: false, error: 'not_found' }, 404)
+  return c.json({ ok: true, site: rowToSite(row) })
+})
+
+// 新規登録
+app.post('/api/sites', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}))
+    const v = sanitizeSiteInput(body)
+    // id はフロント発番(uid) を尊重、無ければサーバ生成
+    const id = (body && typeof body.id === 'string' && body.id) || ('s_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8))
+    const now = new Date().toISOString()
+    await c.env.DB.prepare(
+      `INSERT INTO sites
+        (id, site_no, name, manager, structure, quantity, material,
+         order_status, start_date, end_date, amount, memo,
+         created_at, updated_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+    ).bind(
+      id, v.site_no, v.name, v.manager, v.structure, v.quantity, v.material,
+      v.order_status, v.start_date, v.end_date, v.amount, v.memo,
+      now, now
+    ).run()
+    const row = await c.env.DB.prepare(`SELECT * FROM sites WHERE id = ?`).bind(id).first<SiteRow>()
+    return c.json({ ok: true, site: row ? rowToSite(row) : null })
+  } catch (e: any) {
+    return c.json({ ok: false, error: String(e && e.message || e) }, 500)
+  }
+})
+
+// 更新
+app.put('/api/sites/:id', async (c) => {
+  try {
+    const id = c.req.param('id')
+    const body = await c.req.json().catch(() => ({}))
+    const v = sanitizeSiteInput(body)
+    const now = new Date().toISOString()
+    const existing = await c.env.DB.prepare(`SELECT id FROM sites WHERE id = ?`).bind(id).first()
+    if (!existing) return c.json({ ok: false, error: 'not_found' }, 404)
+    await c.env.DB.prepare(
+      `UPDATE sites SET
+         site_no = ?, name = ?, manager = ?, structure = ?,
+         quantity = ?, material = ?, order_status = ?,
+         start_date = ?, end_date = ?, amount = ?, memo = ?,
+         updated_at = ?
+       WHERE id = ?`
+    ).bind(
+      v.site_no, v.name, v.manager, v.structure,
+      v.quantity, v.material, v.order_status,
+      v.start_date, v.end_date, v.amount, v.memo,
+      now, id
+    ).run()
+    const row = await c.env.DB.prepare(`SELECT * FROM sites WHERE id = ?`).bind(id).first<SiteRow>()
+    return c.json({ ok: true, site: row ? rowToSite(row) : null })
+  } catch (e: any) {
+    return c.json({ ok: false, error: String(e && e.message || e) }, 500)
+  }
+})
+
+// 削除
+app.delete('/api/sites/:id', async (c) => {
+  try {
+    const id = c.req.param('id')
+    const r = await c.env.DB.prepare(`DELETE FROM sites WHERE id = ?`).bind(id).run()
+    return c.json({ ok: true, deleted: r.meta?.changes ?? 0 })
+  } catch (e: any) {
+    return c.json({ ok: false, error: String(e && e.message || e) }, 500)
+  }
+})
+
+// 一括取り込み(JSONバックアップ復元)。既存データを全件置換する。
+app.post('/api/sites/import', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}))
+    const list: any[] = Array.isArray(body && body.sites) ? body.sites : []
+    const stmts: D1PreparedStatement[] = []
+    stmts.push(c.env.DB.prepare(`DELETE FROM sites`))
+    for (const s of list) {
+      const v = sanitizeSiteInput(s)
+      const id = (s && typeof s.id === 'string' && s.id) || ('s_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8))
+      const created = (s && s.createdAt) || new Date().toISOString()
+      const updated = (s && s.updatedAt) || created
+      stmts.push(c.env.DB.prepare(
+        `INSERT INTO sites
+          (id, site_no, name, manager, structure, quantity, material,
+           order_status, start_date, end_date, amount, memo,
+           created_at, updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+      ).bind(
+        id, v.site_no, v.name, v.manager, v.structure, v.quantity, v.material,
+        v.order_status, v.start_date, v.end_date, v.amount, v.memo,
+        created, updated
+      ))
+    }
+    await c.env.DB.batch(stmts)
+    return c.json({ ok: true, imported: list.length })
+  } catch (e: any) {
+    return c.json({ ok: false, error: String(e && e.message || e) }, 500)
+  }
 })
 
 app.use(renderer)

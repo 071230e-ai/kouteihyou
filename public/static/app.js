@@ -12,9 +12,11 @@
   'use strict';
 
   // ---------- 定数 ----------
-  const STORAGE_KEY = 'murata_tekkin_sites_v1';
+  // 注意: 現場データは Cloudflare D1(サーバー) に保存し、全デバイスから共有する。
+  // localStorage は表示開始月や権限など「クライアント設定」のみで使用する。
   const ROLE_KEY = 'murata_tekkin_role_v1';
   const RANGE_KEY = 'murata_tekkin_range_v2';
+  const API_BASE = '/api';
 
   // 材料区分: 「材工」「支給材」の2択に統一
   const MATERIAL_OPTIONS = ['材工', '支給材'];
@@ -46,20 +48,65 @@
   };
   let listSearch = '';
 
-  // ---------- ストレージ ----------
-  function loadSites() {
+  // ---------- ストレージ (Cloudflare D1 / REST API) ----------
+  // すべての現場データはサーバー側 D1 に保存され、全デバイスで共有される。
+  async function apiFetch(path, opts) {
+    const res = await fetch(API_BASE + path, Object.assign({
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' }
+    }, opts || {}));
+    if (res.status === 401) {
+      // セッション切れ → ログイン画面へ
+      window.location.href = '/login';
+      throw new Error('unauthorized');
+    }
+    let data = null;
+    try { data = await res.json(); } catch (_) { /* ignore */ }
+    if (!res.ok || (data && data.ok === false)) {
+      const msg = (data && data.error) || ('HTTP ' + res.status);
+      throw new Error(msg);
+    }
+    return data;
+  }
+
+  // 起動時 / 再描画前に最新データを取得
+  async function loadSites() {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      const arr = raw ? JSON.parse(raw) : [];
-      // 既存データの下位互換マイグレーション
+      const data = await apiFetch('/sites', { method: 'GET' });
+      const arr = (data && Array.isArray(data.sites)) ? data.sites : [];
       sites = arr.map(migrateSite);
     } catch (e) {
       console.error('load error', e);
       sites = [];
+      showToast('データの取得に失敗しました: ' + e.message, 'error');
     }
   }
-  function saveSites() {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(sites));
+  // 互換用 (削除済み機能のスタブ)。データは API で都度サーバへ保存するため何もしない。
+  function saveSites() { /* no-op: データは API 呼び出しで永続化済み */ }
+
+  // 1件作成
+  async function apiCreateSite(site) {
+    const data = await apiFetch('/sites', {
+      method: 'POST', body: JSON.stringify(site)
+    });
+    return data && data.site ? migrateSite(data.site) : null;
+  }
+  // 1件更新
+  async function apiUpdateSite(id, site) {
+    const data = await apiFetch('/sites/' + encodeURIComponent(id), {
+      method: 'PUT', body: JSON.stringify(site)
+    });
+    return data && data.site ? migrateSite(data.site) : null;
+  }
+  // 1件削除
+  async function apiDeleteSite(id) {
+    return await apiFetch('/sites/' + encodeURIComponent(id), { method: 'DELETE' });
+  }
+  // 一括取り込み(JSON復元)
+  async function apiImportSites(arr) {
+    return await apiFetch('/sites/import', {
+      method: 'POST', body: JSON.stringify({ sites: arr })
+    });
   }
   // 旧データの構造を新スキーマに変換(エラーにならないように)
   // 注意: shikyuu / zaikou は新スキーマでは使わないため移行時に破棄。
@@ -125,19 +172,32 @@
     });
   }
   // 番号順ソート用比較関数
-  // - 番号ありが先(若い順)
-  // - 番号なしは末尾(その中では id 順 = 登録順)
-  // - 同番号は id(=登録時タイムスタンプを含む)で安定ソート
+  // 仕様:
+  //  1. No(siteNo / no) は数値順で若い順に並べる(文字列順にしない)
+  //  2. No が未入力 / null / 空文字 / NaN は末尾に表示
+  //  3. 同じ No は createdAt(更新日時 updatedAt が無ければ id) 順で安定表示
   function compareByNo(a, b) {
-    const naRaw = (a.siteNo != null) ? Number(a.siteNo) : (a.no != null ? Number(a.no) : NaN);
-    const nbRaw = (b.siteNo != null) ? Number(b.siteNo) : (b.no != null ? Number(b.no) : NaN);
-    const aHas = isFinite(naRaw) && naRaw > 0;
-    const bHas = isFinite(nbRaw) && nbRaw > 0;
-    if (aHas && !bHas) return -1;
-    if (!aHas && bHas) return 1;
-    if (aHas && bHas && naRaw !== nbRaw) return naRaw - nbRaw;
-    // 番号なし同士、または同番号 → id 順(登録順)
-    return String(a.id || '').localeCompare(String(b.id || ''));
+    const aRaw = (a && (a.siteNo !== undefined ? a.siteNo : a.no));
+    const bRaw = (b && (b.siteNo !== undefined ? b.siteNo : b.no));
+    const aInvalid = aRaw === undefined || aRaw === null || aRaw === '' || Number.isNaN(Number(aRaw));
+    const bInvalid = bRaw === undefined || bRaw === null || bRaw === '' || Number.isNaN(Number(bRaw));
+    if (aInvalid && bInvalid) {
+      // 番号なし同士 → 登録日時の古い順
+      const at = new Date((a && a.createdAt) || 0).getTime();
+      const bt = new Date((b && b.createdAt) || 0).getTime();
+      if (at !== bt) return at - bt;
+      return String((a && a.id) || '').localeCompare(String((b && b.id) || ''));
+    }
+    if (aInvalid) return 1;   // a は末尾へ
+    if (bInvalid) return -1;  // b は末尾へ
+    const noA = Number(aRaw);
+    const noB = Number(bRaw);
+    if (noA !== noB) return noA - noB; // 数値順(1, 2, 9, 10, 11)
+    // 同番号 → 登録日時の古い順 → id 順 で安定表示
+    const at = new Date((a && a.createdAt) || 0).getTime();
+    const bt = new Date((b && b.createdAt) || 0).getTime();
+    if (at !== bt) return at - bt;
+    return String((a && a.id) || '').localeCompare(String((b && b.id) || ''));
   }
   // 次の番号(新規登録時のデフォルト表示。ユーザーは空にもできる)
   function nextSiteNo() {
@@ -562,17 +622,18 @@
     if (input) input.classList.add('has-error');
   }
 
-  function submitForm() {
+  async function submitForm() {
     clearErrors();
 
-    // 番号: 未入力時は自動採番(最大+1)
+    // 番号: 未入力時は自動採番(最大+1)。編集時に空にしたら null(末尾)とする選択肢もあるが
+    // 仕様9 に合わせ、新規=自動採番、編集=元番号を維持する。手入力時はその値を採用。
     const noRaw = document.getElementById('siteNo').value.trim();
     let noValue;
     if (noRaw === '') {
-      // 編集中で元の番号があれば維持、新規なら次番号
       if (editingId) {
         const orig = sites.find(s => s.id === editingId);
-        noValue = (orig && orig.no) ? Number(orig.no) : nextSiteNo();
+        const origNo = orig ? (orig.siteNo != null ? orig.siteNo : orig.no) : null;
+        noValue = (origNo != null && origNo !== '') ? Number(origNo) : nextSiteNo();
       } else {
         noValue = nextSiteNo();
       }
@@ -583,6 +644,8 @@
 
     const data = {
       id: editingId || uid(),
+      // No(番号) は siteNo / no の両方に保存する(互換のため両方を更新する点が重要)
+      siteNo: noValue,
       no: noValue,
       name: document.getElementById('siteName').value.trim(),
       manager: document.getElementById('manager').value.trim(),
@@ -624,16 +687,31 @@
       return;
     }
 
-    if (editingId) {
-      const idx = sites.findIndex(s => s.id === editingId);
-      if (idx >= 0) sites[idx] = Object.assign({}, sites[idx], data);
-      showToast('更新しました', 'success');
-    } else {
-      data.createdAt = new Date().toISOString();
-      sites.push(data);
-      showToast('登録しました', 'success');
+    // サーバ(D1) に保存。成功後にローカル配列を更新して即時反映する。
+    const saveBtn = document.getElementById('btnSave');
+    if (saveBtn) saveBtn.disabled = true;
+    try {
+      if (editingId) {
+        const saved = await apiUpdateSite(editingId, data);
+        if (saved) {
+          const idx = sites.findIndex(s => s.id === editingId);
+          if (idx >= 0) sites[idx] = saved;
+          else sites.push(saved);
+        }
+        showToast('更新しました', 'success');
+      } else {
+        const saved = await apiCreateSite(data);
+        if (saved) sites.push(saved);
+        showToast('登録しました', 'success');
+      }
+    } catch (e) {
+      showToast('保存に失敗しました: ' + e.message, 'error');
+      if (saveBtn) saveBtn.disabled = false;
+      return;
     }
-    saveSites();
+    if (saveBtn) saveBtn.disabled = false;
+    // 念のためサーバから再取得して並び順を厳密に同期
+    try { await loadSites(); } catch (_) {}
     resetForm();
     renderSchedule();
     renderList();
@@ -676,12 +754,17 @@
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
-  function deleteSite(id) {
+  async function deleteSite(id) {
     const site = sites.find(s => s.id === id);
     if (!site) return;
     if (!confirm(`「${site.name}」を削除します。よろしいですか?`)) return;
-    sites = sites.filter(s => s.id !== id);
-    saveSites();
+    try {
+      await apiDeleteSite(id);
+      sites = sites.filter(s => s.id !== id);
+    } catch (e) {
+      showToast('削除に失敗しました: ' + e.message, 'error');
+      return;
+    }
     renderSchedule();
     renderList();
     renderSummary();
@@ -787,7 +870,10 @@
       const colorCls = barClassByMaterial(s.material);
       const tentativeCls = (s.orderStatus === '受注可能性') ? ' bar-tentative' : '';
       let row = '<tr class="bar-row">';
-      row += `<td class="col-no col-info">${s.no || (idx + 1)}</td>`;
+      // No 列: 番号未入力(null/空)の現場は「-」表示。並び順は末尾(compareByNo で保証)。
+      const noDisp = (s.siteNo != null && s.siteNo !== '') ? s.siteNo
+                   : (s.no != null && s.no !== '') ? s.no : '-';
+      row += `<td class="col-no col-info">${escapeHtml(String(noDisp))}</td>`;
       const stStatus = deriveStatus(s);
       const orderTag = paramTag(s.orderStatus || '', orderClass(s.orderStatus));
       const statusTag = paramTag(stStatus, statusClass(stStatus));
@@ -923,7 +1009,7 @@
       const stStatus2 = deriveStatus(s);
       html += `
         <tr>
-          <td>${s.no || (idx + 1)}</td>
+          <td>${(s.siteNo != null && s.siteNo !== '') ? escapeHtml(String(s.siteNo)) : (s.no != null && s.no !== '') ? escapeHtml(String(s.no)) : '-'}</td>
           <td>${escapeHtml(s.name)} ${paramTag(stStatus2, statusClass(stStatus2))}</td>
           <td>${paramTag(s.manager || '', tantoClass(s.manager))}</td>
           <td>${paramTag(s.structure || '', structureClass(s.structure))}</td>
@@ -2007,20 +2093,21 @@
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (ev) => {
+    reader.onload = async (ev) => {
       try {
         const data = JSON.parse(ev.target.result);
         if (!data.sites || !Array.isArray(data.sites)) throw new Error('形式不正');
         if (!confirm(`${data.sites.length}件のデータをインポートします。現在のデータは上書きされます。よろしいですか?`)) return;
-        sites = data.sites.map(migrateSite);
-        saveSites();
+        // サーバ側 D1 を全件置換 → 全デバイスに即座に反映される
+        await apiImportSites(data.sites);
+        await loadSites();
         renderSchedule();
         renderList();
         renderSummary();
         updateManagerList();
         showToast('インポートしました', 'success');
       } catch (err) {
-        showToast('JSONの読み込みに失敗しました', 'error');
+        showToast('JSONの読み込みに失敗しました: ' + err.message, 'error');
       }
     };
     reader.readAsText(file);
@@ -2061,7 +2148,11 @@
   }
 
   // ---------- サンプルデータ ----------
-  function maybeSeedSample() {
+  // サーバ(D1)が空の場合のみ初回サンプルを投入する。
+  // ※ 本番運用ではサーバが空でも自動投入したくない場合があるが、
+  //    初期表示が空の白紙だと使い方が分かりづらいため、
+  //    端末問わず初回1回だけ共有データとして投入する。
+  async function maybeSeedSample() {
     if (sites.length > 0) return;
     const baseY = startYear;
     const baseM = startMonth;
@@ -2069,68 +2160,78 @@
       const ym = normalizeYM(year, monthIdx);
       return `${ym.year}-${String(ym.month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     }
-    sites = [
-      {
-        id: uid(), no: 1, name: '〇〇マンション新築工事', manager: '山田 太郎',
+    const seed = [
+      { siteNo: 1, name: '〇〇マンション新築工事', manager: '山田 太郎',
         structure: 'マンションRC造', quantity: 85, material: '材工', orderStatus: '受注済み',
         startDate: ymd(baseY, baseM + 1, 15), endDate: ymd(baseY, baseM + 7, 28),
-        amount: 24500000, memo: 'サンプルデータ',
-        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
-      },
-      {
-        id: uid(), no: 2, name: '△△ビル増築工事', manager: '佐藤 花子',
+        amount: 24500000, memo: 'サンプルデータ' },
+      { siteNo: 2, name: '△△ビル増築工事', manager: '佐藤 花子',
         structure: 'S造', quantity: 32, material: '支給材', orderStatus: '受注済み',
         startDate: ymd(baseY, baseM + 3, 1), endDate: ymd(baseY, baseM + 10, 15),
-        amount: 8200000, memo: '',
-        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
-      },
-      {
-        id: uid(), no: 3, name: '□□倉庫基礎工事', manager: '鈴木 一郎',
+        amount: 8200000, memo: '' },
+      { siteNo: 3, name: '□□倉庫基礎工事', manager: '鈴木 一郎',
         structure: '物流倉庫S造', quantity: 14.5, material: '材工', orderStatus: '受注済み',
         startDate: ymd(baseY, baseM + 5, 10), endDate: ymd(baseY, baseM + 8, 20),
-        amount: 5800000, memo: '',
-        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
-      },
-      {
-        id: uid(), no: 10, name: '▲▲工場 耐震補強工事', manager: '山田 太郎',
+        amount: 5800000, memo: '' },
+      { siteNo: 10, name: '▲▲工場 耐震補強工事', manager: '山田 太郎',
         structure: '耐震補強', quantity: 120, material: '材工', orderStatus: '受注済み',
         startDate: ymd(baseY, baseM + 8, 5), endDate: ymd(baseY, baseM + 14, 25),
-        amount: 32500000, memo: '年またぎサンプル',
-        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
-      },
-      {
-        id: uid(), no: 20, name: '◇◇橋梁補修工事(見込)', manager: '佐藤 花子',
+        amount: 32500000, memo: '年またぎサンプル' },
+      { siteNo: 20, name: '◇◇橋梁補修工事(見込)', manager: '佐藤 花子',
         structure: '橋梁', quantity: 0.8, material: '支給材', orderStatus: '受注可能性',
         startDate: ymd(baseY, baseM + 4, 5), endDate: ymd(baseY, baseM + 6, 30),
-        amount: 1800000, memo: '受注可能性サンプル',
-        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
-      }
+        amount: 1800000, memo: '受注可能性サンプル' }
     ];
-    saveSites();
+    try {
+      await apiImportSites(seed);
+      await loadSites();
+    } catch (e) {
+      console.warn('seed failed', e);
+    }
   }
 
   // ---------- 初期化 ----------
-  function init() {
-    loadSites();
+  async function init() {
     loadRange();
-    maybeSeedSample();
-    // 既存データに番号がない場合は自動採番
-    ensureSiteNumbers();
-    saveSites();
     setupRole();
     setupTabs();
     setupRangeSelectors();
     setupForm();
     setupFilters();
     setupExport();
-    updateManagerList();
     updatePrintDateLabels();
+
+    // サーバ(D1) から最新データを取得 → 空なら初回サンプル投入
+    await loadSites();
+    if (sites.length === 0) {
+      await maybeSeedSample();
+    }
+    // 既存データに番号がない場合は補完(画面表示用)
+    ensureSiteNumbers();
+
+    updateManagerList();
     renderSchedule();
     renderList();
     renderSummary();
     // 新規登録フォームの番号欄に次番号を初期表示
     const noEl = document.getElementById('siteNo');
     if (noEl && !noEl.value) noEl.value = nextSiteNo();
+
+    // タブ切替時に最新データを再取得 (他デバイスでの変更を即座に反映)
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const tab = btn.getAttribute('data-tab');
+        if (tab === 'schedule' || tab === 'list' || tab === 'summary') {
+          try {
+            await loadSites();
+            updateManagerList();
+            renderSchedule();
+            renderList();
+            renderSummary();
+          } catch (_) { /* ignore */ }
+        }
+      });
+    });
   }
 
   if (document.readyState === 'loading') {
