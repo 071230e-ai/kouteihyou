@@ -878,10 +878,11 @@
       const orderTag = paramTag(s.orderStatus || '', orderClass(s.orderStatus));
       const statusTag = paramTag(stStatus, statusClass(stStatus));
       row += `<td class="col-name col-info" title="${escapeAttr(s.name)}"><div class="name-cell"><span class="site-name-text">${escapeHtml(s.name)}</span><span class="name-tags">${statusTag}${orderTag}</span></div></td>`;
-      row += `<td class="col-manager col-info">${paramTag(s.manager || '', tantoClass(s.manager))}</td>`;
-      row += `<td class="col-structure col-info" title="${escapeAttr(s.structure || '')}">${paramTag(s.structure || '', structureClass(s.structure))}</td>`;
+      // 担当・構造は通常テキスト(col-plain)、材料区分は丸型バッジ(青=支給材 / 緑=材工)で表示
+      row += `<td class="col-manager col-info col-plain">${escapeHtml(s.manager || '')}</td>`;
+      row += `<td class="col-structure col-info col-plain" title="${escapeAttr(s.structure || '')}">${escapeHtml(s.structure || '')}</td>`;
       row += `<td class="col-quantity col-info">${escapeHtml(fmtTons(s.quantity))}</td>`;
-      row += `<td class="col-material col-info">${paramTag(s.material || '', materialClass(s.material))}</td>`;
+      row += `<td class="col-material col-info">${paramTag(normalizeMaterial(s.material) || '', materialClass(s.material))}</td>`;
       row += `<td class="col-amount col-info">${fmtAmount(s.amount)}</td>`;
 
       for (let i = 0; i < 12; i++) {
@@ -1011,10 +1012,10 @@
         <tr>
           <td>${(s.siteNo != null && s.siteNo !== '') ? escapeHtml(String(s.siteNo)) : (s.no != null && s.no !== '') ? escapeHtml(String(s.no)) : '-'}</td>
           <td>${escapeHtml(s.name)} ${paramTag(stStatus2, statusClass(stStatus2))}</td>
-          <td>${paramTag(s.manager || '', tantoClass(s.manager))}</td>
-          <td>${paramTag(s.structure || '', structureClass(s.structure))}</td>
+          <td class="col-plain">${escapeHtml(s.manager || '')}</td>
+          <td class="col-plain">${escapeHtml(s.structure || '')}</td>
           <td>${escapeHtml(fmtTons(s.quantity))}</td>
-          <td>${paramTag(s.material || '', materialClass(s.material))}</td>
+          <td class="col-material-cell">${paramTag(normalizeMaterial(s.material) || '', materialClass(s.material))}</td>
           <td>${paramTag(s.orderStatus || '', orderClass(s.orderStatus))}</td>
           <td>${fmtDateJP(s.startDate)}<br>〜 ${fmtDateJP(s.endDate)}</td>
           <td class="td-amount">¥${fmtAmount(s.amount)}</td>
@@ -1491,8 +1492,9 @@
         row += `<td class="col-no col-info">${idx + 1}</td>`;
         row += `<td class="col-siteno col-info">${(s.siteNo != null && s.siteNo !== '') ? s.siteNo : ''}</td>`;
         row += `<td class="col-name col-info" title="${escapeAttr(s.name || '')}"><div class="name-cell"><span class="site-name-text">${escapeHtml(s.name || '')}</span><span class="name-tags">${statusTag}${orderTag}</span></div></td>`;
-        row += `<td class="col-manager col-info">${paramTag(s.manager || '', tantoClass(s.manager))}</td>`;
-        row += `<td class="col-structure col-info" title="${escapeAttr(s.structure || '')}">${paramTag(s.structure || '', structureClass(s.structure))}</td>`;
+        // 担当・構造は通常テキスト、材料区分のみ丸型バッジ(PDF出力でも同じ表示)
+        row += `<td class="col-manager col-info col-plain">${escapeHtml(s.manager || '')}</td>`;
+        row += `<td class="col-structure col-info col-plain" title="${escapeAttr(s.structure || '')}">${escapeHtml(s.structure || '')}</td>`;
         row += `<td class="col-quantity col-info">${escapeHtml(fmtTons(s.quantity))}</td>`;
         row += `<td class="col-material col-info">${paramTag(normalizeMaterial(s.material) || '', materialClass(s.material))}</td>`;
         row += `<td class="col-amount col-info">${fmtAmount(s.amount)}</td>`;

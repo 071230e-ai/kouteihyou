@@ -852,6 +852,39 @@ body.role-viewer .admin-only { display: none !important; }
   color-adjust: exact !important;
 }
 
+/* 担当・構造・材料区分は通常テキスト表示にする(色分けバッジを外す)
+ * セル自体は通常の table セル。ステータスバッジ等の他カラムには影響しない。
+ * 念のため、もしバッジ要素が入ってもプレーンに見えるよう打ち消す。
+ * 太さは現場名(.site-name-text font-weight:600)と同等にして視認性を上げる。
+ */
+.col-plain {
+  background: transparent !important;
+  color: #2c3e50 !important;
+  font-weight: 600 !important;
+  text-align: center;
+}
+.col-plain .param-tag {
+  display: inline !important;
+  background: transparent !important;
+  color: inherit !important;
+  border: none !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+  font-weight: inherit !important;
+  font-size: inherit !important;
+  letter-spacing: normal !important;
+  box-shadow: none !important;
+}
+
+/* 数量・契約金額(円)も現場名と同じ太さで表示する(視認性向上)
+ * 背景色やラベルは付けず、テキストの太さだけ揃える。
+ * th(ヘッダ)は元から太字なのでセル(td)のみを対象にする。
+ */
+.schedule-table td.col-quantity,
+.schedule-table td.col-amount {
+  font-weight: 600;
+}
+
 /* 名前セル内のタグ並び */
 .name-cell {
   display: flex;
@@ -942,10 +975,36 @@ body.role-viewer .admin-only { display: none !important; }
   border: 1.5px dashed #d97706;
 }
 
-/* 材料区分セル内のタグ */
-.col-material .param-tag {
+/* ============================================================
+   材料区分: 丸型バッジ表示(添付仕様準拠)
+   - 支給材(tag-shikyuu): 青背景 #2563eb + 白文字
+   - 材工(tag-zaikou)  : 緑背景 #16a34a + 白文字
+   - 角丸の横長ピル形状(border-radius 999px)
+   - 文字は太字、セル内中央揃え(.col-material は元から text-align:center)
+   - 行の高さや罫線は変更しない(セル背景は透明のまま、バッジ部分だけ着色)
+   - 一覧ビュー(td.col-material-cell)でも同じバッジ表示
+   - PDF 出力でも同じ見た目(print-color-adjust: exact)
+   ============================================================ */
+.col-material .param-tag,
+.col-material-cell .param-tag {
+  display: inline-block;
+  padding: 3px 12px;
+  border-radius: 999px;
   font-size: 11px;
-  padding: 3px 8px;
+  font-weight: 700;
+  line-height: 1.4;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  border: 1px solid transparent;
+  text-align: center;
+  -webkit-print-color-adjust: exact !important;
+  print-color-adjust: exact !important;
+  color-adjust: exact !important;
+}
+
+/* 一覧ビュー: 材料区分セル中央揃え */
+td.col-material-cell {
+  text-align: center;
 }
 
 /* 集計テーブル内のタグ */
@@ -1073,7 +1132,8 @@ body.role-viewer .admin-only { display: none !important; }
   }
   body.print-target-schedule .col-material .param-tag {
     font-size: 8px !important;
-    padding: 1px 5px !important;
+    padding: 1px 7px !important;
+    border-radius: 999px !important;
   }
   body.print-target-schedule .name-cell { gap: 3px; }
   body.print-target-schedule .name-tags .param-tag { font-size: 7px !important; padding: 1px 4px !important; }
@@ -1824,6 +1884,20 @@ body.role-viewer .admin-only { display: none !important; }
 .pdf-only-area .schedule-table.pdf-clone-schedule th.col-quantity { text-align: right !important; }
 .pdf-only-area .schedule-table.pdf-clone-schedule td.col-material,
 .pdf-only-area .schedule-table.pdf-clone-schedule th.col-material { text-align: center !important; }
+
+/* PDF clone: 材料区分バッジを丸型ピル形状で表示(html2canvas でも崩れないよう明示指定) */
+.pdf-only-area .schedule-table.pdf-clone-schedule td.col-material .param-tag {
+  display: inline-block !important;
+  padding: 2px 10px !important;
+  border-radius: 999px !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  line-height: 1.4 !important;
+  border: 1px solid transparent !important;
+  white-space: nowrap !important;
+  -webkit-print-color-adjust: exact !important;
+  print-color-adjust: exact !important;
+}
 .pdf-only-area .schedule-table.pdf-clone-schedule td.col-amount,
 .pdf-only-area .schedule-table.pdf-clone-schedule th.col-amount   { text-align: right !important; }
 .pdf-only-area .schedule-table.pdf-clone-schedule td.col-manager,
