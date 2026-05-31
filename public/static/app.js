@@ -131,6 +131,10 @@
     }
     material = normalizeMaterial(material);
 
+    // 下請(subcontract): true / 1 / '1' のみ true、それ以外(undefined含む)は false
+    // → 既存データはフィールドが存在しないため、自動的に「下請なし」として扱われる
+    const subcontract = (s.subcontract === true || s.subcontract === 1 || s.subcontract === '1');
+
     return {
       id: s.id || uid(),
       siteNo: siteNo,                       // 表示順用(任意)
@@ -154,6 +158,7 @@
       address: s.address || '',
       amount: toNumberSafe(s.amount != null ? s.amount : s.contractAmount),
       memo: s.memo || '',
+      subcontract: subcontract,             // 下請フラグ(boolean)
       createdAt: s.createdAt || new Date().toISOString(),
       updatedAt: s.updatedAt || new Date().toISOString()
     };
@@ -642,6 +647,10 @@
       noValue = (isFinite(n) && n > 0) ? Math.floor(n) : nextSiteNo();
     }
 
+    // 下請チェックボックス: 存在しないケース(古いHTML)に備えて optional に取得
+    const subEl = document.getElementById('subcontract');
+    const subcontract = !!(subEl && subEl.checked);
+
     const data = {
       id: editingId || uid(),
       // No(番号) は siteNo / no の両方に保存する(互換のため両方を更新する点が重要)
@@ -657,6 +666,8 @@
       endDate: document.getElementById('endDate').value,
       amount: parseAmount(document.getElementById('amount').value),
       memo: document.getElementById('memo').value.trim(),
+      // 下請フラグ(boolean)。API 側で 0/1 に正規化されて DB に保存される。
+      subcontract: subcontract,
       updatedAt: new Date().toISOString()
     };
 
@@ -727,6 +738,9 @@
     // 新規登録時は次番号を自動表示(任意で書き換え可)
     const noEl = document.getElementById('siteNo');
     if (noEl) noEl.value = nextSiteNo();
+    // 下請チェックは form.reset() で未チェックに戻るが、明示的にも初期化(将来の改変に対する保険)
+    const subEl = document.getElementById('subcontract');
+    if (subEl) subEl.checked = false;
     document.getElementById('saveLabel').textContent = '登録する';
     clearErrors();
   }
@@ -748,6 +762,11 @@
     if (radio) radio.checked = true;
     document.getElementById('amount').value = site.amount ? Number(site.amount).toLocaleString('ja-JP') : '';
     document.getElementById('memo').value = site.memo || '';
+    // 下請チェック状態を反映(true/1/'1' は全てチェック扱い)
+    const subEl = document.getElementById('subcontract');
+    if (subEl) {
+      subEl.checked = (site.subcontract === true || site.subcontract === 1 || site.subcontract === '1');
+    }
     document.getElementById('saveLabel').textContent = '更新する';
     clearErrors();
     document.querySelector('.tab-btn[data-tab="register"]').click();
@@ -877,7 +896,9 @@
       const stStatus = deriveStatus(s);
       const orderTag = paramTag(s.orderStatus || '', orderClass(s.orderStatus));
       const statusTag = paramTag(stStatus, statusClass(stStatus));
-      row += `<td class="col-name col-info" title="${escapeAttr(s.name)}"><div class="name-cell"><span class="site-name-text">${escapeHtml(s.name)}</span><span class="name-tags">${statusTag}${orderTag}</span></div></td>`;
+      // 左側のステータス/受注バッジは下請に関係なく従来どおりの色で表示する
+      const tagsCls = `name-tags`;
+      row += `<td class="col-name col-info" title="${escapeAttr(s.name)}"><div class="name-cell"><span class="site-name-text">${escapeHtml(s.name)}</span><span class="${tagsCls}">${statusTag}${orderTag}</span></div></td>`;
       // 担当・構造は通常テキスト(col-plain)、材料区分は丸型バッジ(青=支給材 / 緑=材工)で表示
       row += `<td class="col-manager col-info col-plain">${escapeHtml(s.manager || '')}</td>`;
       row += `<td class="col-structure col-info col-plain" title="${escapeAttr(s.structure || '')}">${escapeHtml(s.structure || '')}</td>`;
@@ -908,7 +929,10 @@
           const showPeriod = !!(s.startDate && s.endDate) && periodYM && periodYM !== '-';
           if (showPeriod) labelParts.push(periodYM);
           const fullLabel = labelParts.join('　');
-          cellInner = `<div class="gantt-bar ${colorCls}${tentativeCls}" style="left:${leftPct}%;width:${widthPct}%;" title="${escapeAttr(tip)}"><span class="bar-label">${escapeHtml(fullLabel)}</span></div>`;
+          // 下請にチェックが入っている現場は右側の横バーを黄色で表示する
+          // (受注可能性のオレンジ斜線より優先させるため、クラス並びの最後に置く)
+          const subBarCls = s.subcontract ? ' bar-subcontract' : '';
+          cellInner = `<div class="gantt-bar ${colorCls}${tentativeCls}${subBarCls}" style="left:${leftPct}%;width:${widthPct}%;" title="${escapeAttr(tip)}"><span class="bar-label">${escapeHtml(fullLabel)}</span></div>`;
         }
         row += `<td class="${cls}">${cellInner}</td>`;
       }
@@ -1008,6 +1032,7 @@
         ? '<span class="badge badge-tentative">受注可能性</span>'
         : '<span class="badge badge-confirmed">受注済み</span>';
       const stStatus2 = deriveStatus(s);
+      // 一覧画面は下請に関係なく従来どおりの色で表示する(左側バッジは変更しない)
       html += `
         <tr>
           <td>${(s.siteNo != null && s.siteNo !== '') ? escapeHtml(String(s.siteNo)) : (s.no != null && s.no !== '') ? escapeHtml(String(s.no)) : '-'}</td>
@@ -1487,11 +1512,13 @@
         const stStatus = deriveStatus(s);
         const orderTag = paramTag(s.orderStatus || '', orderClass(s.orderStatus));
         const statusTag = paramTag(stStatus, statusClass(stStatus));
+        // PDF出力でも左側バッジは下請に関係なく従来どおりの色で表示する
+        const tagsCls = `name-tags`;
 
         let row = '<tr class="bar-row">';
         row += `<td class="col-no col-info">${idx + 1}</td>`;
         row += `<td class="col-siteno col-info">${(s.siteNo != null && s.siteNo !== '') ? s.siteNo : ''}</td>`;
-        row += `<td class="col-name col-info" title="${escapeAttr(s.name || '')}"><div class="name-cell"><span class="site-name-text">${escapeHtml(s.name || '')}</span><span class="name-tags">${statusTag}${orderTag}</span></div></td>`;
+        row += `<td class="col-name col-info" title="${escapeAttr(s.name || '')}"><div class="name-cell"><span class="site-name-text">${escapeHtml(s.name || '')}</span><span class="${tagsCls}">${statusTag}${orderTag}</span></div></td>`;
         // 担当・構造は通常テキスト、材料区分のみ丸型バッジ(PDF出力でも同じ表示)
         row += `<td class="col-manager col-info col-plain">${escapeHtml(s.manager || '')}</td>`;
         row += `<td class="col-structure col-info col-plain" title="${escapeAttr(s.structure || '')}">${escapeHtml(s.structure || '')}</td>`;
@@ -1523,7 +1550,10 @@
             // 現場名・数量・材料区分・工期 を 1つの<span>内に1つの文字列としてまとめて出力する。
             if (showPeriod) labelParts.push(periodYM);
             const fullLabel = labelParts.join('　');
-            cellInner = `<div class="gantt-bar ${colorCls}${tentativeCls}" style="left:${leftPct}%;width:${widthPct}%;" title="${escapeAttr(tip)}"><span class="bar-label">${escapeHtml(fullLabel)}</span></div>`;
+            // 下請にチェックが入っている現場は PDF 出力でも横バーを黄色で表示する
+            // (受注可能性のオレンジ斜線より優先させるため、クラス並びの最後に置く)
+            const subBarCls = s.subcontract ? ' bar-subcontract' : '';
+            cellInner = `<div class="gantt-bar ${colorCls}${tentativeCls}${subBarCls}" style="left:${leftPct}%;width:${widthPct}%;" title="${escapeAttr(tip)}"><span class="bar-label">${escapeHtml(fullLabel)}</span></div>`;
           }
           row += `<td class="${cls}">${cellInner}</td>`;
         }

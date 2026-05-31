@@ -219,6 +219,10 @@ type SiteRow = {
   end_date: string | null
   amount: number
   memo: string
+  // 下請フラグ (0=通常, 1=下請)。migrations/0002_add_subcontract.sql で追加。
+  // 既存データには DEFAULT 0 が適用されるため null は返らない想定だが、
+  // 旧スキーマでフィールド未存在のケースに備えて optional として扱う。
+  subcontract?: number | null
   created_at: string
   updated_at: string
 }
@@ -240,6 +244,9 @@ function rowToSite(r: SiteRow) {
     endDate: r.end_date || '',
     amount: Number(r.amount) || 0,
     memo: r.memo || '',
+    // 下請: DB上は 0/1 で保持、フロントには boolean で返す。
+    // 未マイグレーション環境 (subcontract カラム未追加) の場合は null/undefined になり、false 扱い。
+    subcontract: !!(r.subcontract === 1 || r.subcontract === true),
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   }
@@ -266,6 +273,9 @@ function sanitizeSiteInput(b: any) {
   const noRaw = (b && b.siteNo !== undefined) ? b.siteNo : (b && b.no)
   const material = toStr((b && (b.material ?? b.zairyou))).trim()
   const orderStatus = toStr(b && b.orderStatus).trim() || '受注済み'
+  // 下請: true / 1 / '1' / 'true' を真とみなし、それ以外は false。DB 格納値は 0/1。
+  const subRaw = (b && b.subcontract !== undefined) ? b.subcontract : false
+  const subcontract = (subRaw === true || subRaw === 1 || subRaw === '1' || subRaw === 'true') ? 1 : 0
   return {
     site_no: toNumOrNull(noRaw),
     name: toStr(b && b.name).trim(),
@@ -278,6 +288,7 @@ function sanitizeSiteInput(b: any) {
     end_date: toDateOrNull(b && b.endDate),
     amount: toNum(b && b.amount),
     memo: toStr(b && b.memo),
+    subcontract: subcontract,
   }
 }
 
@@ -286,7 +297,7 @@ app.get('/api/sites', async (c) => {
   try {
     const { results } = await c.env.DB.prepare(
       `SELECT id, site_no, name, manager, structure, quantity, material,
-              order_status, start_date, end_date, amount, memo,
+              order_status, start_date, end_date, amount, memo, subcontract,
               created_at, updated_at
        FROM sites
        ORDER BY
@@ -321,12 +332,12 @@ app.post('/api/sites', async (c) => {
     await c.env.DB.prepare(
       `INSERT INTO sites
         (id, site_no, name, manager, structure, quantity, material,
-         order_status, start_date, end_date, amount, memo,
+         order_status, start_date, end_date, amount, memo, subcontract,
          created_at, updated_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     ).bind(
       id, v.site_no, v.name, v.manager, v.structure, v.quantity, v.material,
-      v.order_status, v.start_date, v.end_date, v.amount, v.memo,
+      v.order_status, v.start_date, v.end_date, v.amount, v.memo, v.subcontract,
       now, now
     ).run()
     const row = await c.env.DB.prepare(`SELECT * FROM sites WHERE id = ?`).bind(id).first<SiteRow>()
@@ -350,12 +361,14 @@ app.put('/api/sites/:id', async (c) => {
          site_no = ?, name = ?, manager = ?, structure = ?,
          quantity = ?, material = ?, order_status = ?,
          start_date = ?, end_date = ?, amount = ?, memo = ?,
+         subcontract = ?,
          updated_at = ?
        WHERE id = ?`
     ).bind(
       v.site_no, v.name, v.manager, v.structure,
       v.quantity, v.material, v.order_status,
       v.start_date, v.end_date, v.amount, v.memo,
+      v.subcontract,
       now, id
     ).run()
     const row = await c.env.DB.prepare(`SELECT * FROM sites WHERE id = ?`).bind(id).first<SiteRow>()
@@ -391,12 +404,12 @@ app.post('/api/sites/import', async (c) => {
       stmts.push(c.env.DB.prepare(
         `INSERT INTO sites
           (id, site_no, name, manager, structure, quantity, material,
-           order_status, start_date, end_date, amount, memo,
+           order_status, start_date, end_date, amount, memo, subcontract,
            created_at, updated_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
       ).bind(
         id, v.site_no, v.name, v.manager, v.structure, v.quantity, v.material,
-        v.order_status, v.start_date, v.end_date, v.amount, v.memo,
+        v.order_status, v.start_date, v.end_date, v.amount, v.memo, v.subcontract,
         created, updated
       ))
     }
@@ -527,6 +540,7 @@ app.get('/', (c) => {
               <span class="legend-item"><span class="legend-color bar-materialwork"></span> 材工系</span>
               <span class="legend-item"><span class="legend-color bar-other"></span> その他</span>
               <span class="legend-item"><span class="legend-color bar-tentative"></span> 受注可能性</span>
+              <span class="legend-item"><span class="legend-color bar-subcontract"></span> 下請</span>
             </div>
           </div>
         </section>
@@ -629,6 +643,19 @@ app.get('/', (c) => {
                   </label>
                 </div>
                 <div class="error-msg" data-for="orderStatus"></div>
+              </div>
+
+              {/* 下請(任意) - 初期は未チェック。チェック時は工程表のパラメータバッジが黄色になる */}
+              <div class="form-group">
+                <label class="form-label">下請</label>
+                <label class="subcontract-toggle" for="subcontract" title="下請案件の場合はチェックしてください">
+                  <input type="checkbox" id="subcontract" name="subcontract" />
+                  <span class="subcontract-toggle-box">
+                    <i class="fas fa-handshake subcontract-toggle-icon"></i>
+                    <span class="subcontract-toggle-text">下請案件</span>
+                  </span>
+                </label>
+                <div class="form-help">チェックを入れると工程表上のパラメータが黄色で表示されます</div>
               </div>
 
               <div class="form-group">

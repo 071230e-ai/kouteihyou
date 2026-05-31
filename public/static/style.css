@@ -696,6 +696,121 @@ textarea.form-input { resize: vertical; min-height: 60px; }
   border-top: 1px solid #eef1f5;
 }
 
+/* ============================================================
+   下請(subcontract) チェックボックスのトグル UI
+   - input は非表示にし、ラベル全体をクリックターゲットに
+   - チェック時は黄色背景の枠線付きピル形状で「下請案件」を強調
+   - 初期(未チェック)はグレー枠の通常スタイル
+   ============================================================ */
+.subcontract-toggle {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+  margin-top: 4px;
+}
+.subcontract-toggle input[type="checkbox"] {
+  /* チェックボックス自体は視覚的に隠す(キーボード操作はラベル経由で可) */
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+.subcontract-toggle-box {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border: 2px solid #cdd6e0;
+  border-radius: 999px;
+  background: #fff;
+  color: #6b7a8a;
+  font-weight: 600;
+  font-size: 14px;
+  transition: all 0.15s;
+}
+.subcontract-toggle-box::before {
+  /* チェックインジケータ(四角→チェック) */
+  content: '';
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid #cdd6e0;
+  border-radius: 3px;
+  background: #fff;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+.subcontract-toggle-icon {
+  font-size: 14px;
+  color: #95a5a6;
+  transition: color 0.15s;
+}
+.subcontract-toggle input[type="checkbox"]:checked + .subcontract-toggle-box {
+  border-color: #d4a017;
+  background: #fde047;       /* 黄色背景 */
+  color: #713f12;            /* 濃い茶 */
+  box-shadow: 0 1px 4px rgba(212, 160, 23, 0.25);
+}
+.subcontract-toggle input[type="checkbox"]:checked + .subcontract-toggle-box::before {
+  background: #ca8a04;
+  border-color: #ca8a04;
+  /* チェックマーク(白) */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23ffffff' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='3,8 7,12 13,4'/%3E%3C/svg%3E");
+  background-size: 12px 12px;
+  background-repeat: no-repeat;
+  background-position: center;
+}
+.subcontract-toggle input[type="checkbox"]:checked + .subcontract-toggle-box .subcontract-toggle-icon {
+  color: #713f12;
+}
+.subcontract-toggle input[type="checkbox"]:focus-visible + .subcontract-toggle-box {
+  outline: 2px solid #2c6ba6;
+  outline-offset: 2px;
+}
+
+/* ============================================================
+   下請バー(工程表 右側の横バー)— 黄色オーバーライド
+   - 左側のステータス/受注/材料区分バッジには一切影響しない
+   - 材料色(bar-supply / bar-materialwork / bar-other)と受注可能性
+     (bar-tentative)より優先させるため、クラス並びの最後に置きつつ
+     !important で背景・文字色・枠線・::before を強制上書きする
+   - 文字色は濃い茶 #713f12 で黄色背景上でも視認性を確保
+   - 凡例スウォッチ .legend-color.bar-subcontract にも同じ色を適用
+   ============================================================ */
+.gantt-bar.bar-subcontract {
+  background: linear-gradient(135deg, #fbbf24 0%, #fde047 100%) !important;
+  background-color: #fde047 !important;
+  color: #713f12 !important;
+  border: 1px solid #b45309 !important;
+  text-shadow: none !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  -webkit-print-color-adjust: exact !important;
+  print-color-adjust: exact !important;
+}
+.gantt-bar.bar-subcontract .bar-label,
+.gantt-bar.bar-subcontract span {
+  color: #713f12 !important;
+  text-shadow: none !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+/* 下請 ∧ 受注可能性 でも下請黄色を優先(斜線・破線レイヤーを完全に無効化) */
+.gantt-bar.bar-subcontract::before,
+.gantt-bar.bar-subcontract.bar-tentative::before {
+  content: none !important;
+  display: none !important;
+}
+/* 凡例スウォッチ(下請) */
+.legend-color.bar-subcontract {
+  background: #fde047 !important;
+  background-color: #fde047 !important;
+  border: 1px solid #b45309 !important;
+  box-shadow: none !important;
+}
+
 /* ============ 集計画面 ============ */
 .summary-section {
   background: #fff;
@@ -1937,7 +2052,6 @@ td.col-material-cell {
   flex-wrap: wrap;
   gap: 3px;
 }
-
 /* paramTag を画面のままで使うため、PDF area 内でも .tag のスタイルが効くようにする
    (画面側のグローバル .tag-* がそのまま継承される。border/print-color-adjustだけ補強) */
 .pdf-only-area .schedule-table.pdf-clone-schedule .tag {
@@ -2032,4 +2146,30 @@ td.col-material-cell {
 }
 .pdf-only-area .schedule-table.pdf-clone-schedule .gantt-bar.bar-tentative::before {
   display: none;  /* 画面で重ねていた半透明レイヤーは PDF では不要 */
+}
+
+/* PDF クローン: 下請バー(右側の横バー)を黄色で表示
+   - html2canvas は linear-gradient を割ることがあるためフラット色を強制
+   - bar-supply / bar-materialwork / bar-other / bar-tentative より「後ろ」に記述し
+     同詳細度・同 !important のとき後出し勝ちで黄色を確実に最優先にする
+   - 左側バッジ(.param-tag)には一切影響しない */
+.pdf-only-area .schedule-table.pdf-clone-schedule .gantt-bar.bar-subcontract {
+  background: #fde047 !important;
+  background-color: #fde047 !important;
+  color: #713f12 !important;
+  border: 1px solid #b45309 !important;
+  text-shadow: none !important;
+  -webkit-print-color-adjust: exact !important;
+  print-color-adjust: exact !important;
+}
+.pdf-only-area .schedule-table.pdf-clone-schedule .gantt-bar.bar-subcontract .bar-label,
+.pdf-only-area .schedule-table.pdf-clone-schedule .gantt-bar.bar-subcontract span {
+  color: #713f12 !important;
+  background-color: rgba(255, 255, 255, 0.92) !important;
+  text-shadow: none !important;
+}
+.pdf-only-area .schedule-table.pdf-clone-schedule .gantt-bar.bar-subcontract::before,
+.pdf-only-area .schedule-table.pdf-clone-schedule .gantt-bar.bar-subcontract.bar-tentative::before {
+  content: none !important;
+  display: none !important;
 }
