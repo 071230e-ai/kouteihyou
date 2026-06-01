@@ -1104,14 +1104,20 @@
     const byMaterial = groupBy(rangeSites, s => normalizeMaterial(s.material) || '(未設定)');
 
     // 月別
+    // 仕様: 予定数量・契約金額合計の按分の「分母」は、
+    //       表示期間に切り詰めた日数ではなく、各現場の本来の工期全日数(sd〜ed)を使う。
+    //       → 表示期間を切り替えても、同じ月の予定数量・契約金額合計が変わらない。
+    //       稼働現場数の数え方は従来通り(その月に1日でも工期が重なれば1件)。
     const monthly = months.map(() => ({ active: 0, qty: 0, amount: 0 }));
     rangeSites.forEach(s => {
       const sd = toDate(s.startDate);
       const ed = toDate(s.endDate);
       if (!sd || !ed) return;
+      // 月との重なり判定用には、表示期間に切り詰めた範囲を使う(従来通り、表示期間外の月をスキップするため)
       const segStart = sd < rangeStart ? rangeStart : sd;
       const segEnd = ed > rangeEnd ? rangeEnd : ed;
-      const totalDays = Math.floor((segEnd - segStart) / 86400000) + 1;
+      // 按分の分母は「現場本来の工期全日数」で固定
+      const totalDays = Math.floor((ed - sd) / 86400000) + 1;
       const qty = Number(s.quantity) || 0;
       const amt = Number(s.amount) || 0;
 
@@ -1772,6 +1778,8 @@
     }
 
     // 月別 (画面と同じ12ヶ月分。日数で按分した参考値)
+    // 仕様: 画面側 computeSummary() と同じく、按分の分母は現場本来の工期全日数(sd〜ed)。
+    //       表示期間を切り替えても、同じ月の予定数量・契約金額合計が変わらない。
     const months = buildMonthList(startYear, startMonth, 12);
     const monthly = months.map(() => ({ active: 0, qty: 0, amount: 0 }));
     filtered.forEach(s => {
@@ -1780,7 +1788,8 @@
       if (!sd || !ed) return;
       const segStart = sd < rangeStart ? rangeStart : sd;
       const segEnd = ed > rangeEnd ? rangeEnd : ed;
-      const totalDays = Math.floor((segEnd - segStart) / 86400000) + 1;
+      // 按分の分母は「現場本来の工期全日数」で固定
+      const totalDays = Math.floor((ed - sd) / 86400000) + 1;
       const qty = Number(s.quantity) || 0;
       const amt = Number(s.amount) || 0;
       for (let i = 0; i < months.length; i++) {
