@@ -252,6 +252,122 @@ function rowToSite(r: SiteRow) {
   }
 }
 
+// ------------------------------------------------------------
+// 部位別工程 (site_parts) ヘルパー
+// ------------------------------------------------------------
+// 1つの現場に紐づく0..N件の部位レコード。
+// API レスポンスの site オブジェクトに parts: [...] として合流させる。
+type SitePartRow = {
+  id: string
+  site_id: string
+  sort_order: number
+  name: string
+  quantity: number
+  start_date: string | null
+  end_date: string | null
+  created_at: string
+  updated_at: string
+}
+
+function partRowToObj(r: SitePartRow) {
+  return {
+    id: r.id,
+    name: r.name || '',
+    quantity: Number(r.quantity) || 0,
+    startDate: r.start_date || '',
+    endDate: r.end_date || '',
+    sortOrder: Number(r.sort_order) || 0,
+  }
+}
+
+// クライアントから来た parts 配列を保存用に正規化。
+// - 完全に空白(name 空 & quantity 0 & 日付なし) の行は除外する
+// - quantity は数値化、日付は 'YYYY-MM-DD' のみ受け付ける
+function sanitizePartsInput(arr: any): {
+  id: string
+  name: string
+  quantity: number
+  start_date: string | null
+  end_date: string | null
+  sort_order: number
+}[] {
+  if (!Array.isArray(arr)) return []
+  const toDate = (v: any) => {
+    const s = (v == null ? '' : String(v)).trim()
+    return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null
+  }
+  const toNum = (v: any) => {
+    if (v === null || v === undefined || v === '') return 0
+    const n = Number(v)
+    return Number.isFinite(n) ? n : 0
+  }
+  const out: any[] = []
+  arr.forEach((p, idx) => {
+    if (!p || typeof p !== 'object') return
+    const name = (p.name == null ? '' : String(p.name)).trim()
+    const quantity = toNum(p.quantity)
+    const sd = toDate(p.startDate)
+    const ed = toDate(p.endDate)
+    // 完全に空白の行は保存対象から除外
+    if (!name && !quantity && !sd && !ed) return
+    const id = (p.id && typeof p.id === 'string' && p.id) ||
+      ('p_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8) + '_' + idx)
+    const sort_order = Number.isFinite(Number(p.sortOrder)) ? Number(p.sortOrder) : idx
+    out.push({
+      id,
+      name,
+      quantity,
+      start_date: sd,
+      end_date: ed,
+      sort_order,
+    })
+  })
+  return out
+}
+
+// 1つの現場の parts を一括置換(DELETE → INSERT)。トランザクションは batch で実現。
+async function replacePartsForSite(db: D1Database, siteId: string, parts: ReturnType<typeof sanitizePartsInput>) {
+  const stmts: D1PreparedStatement[] = []
+  stmts.push(db.prepare(`DELETE FROM site_parts WHERE site_id = ?`).bind(siteId))
+  const now = new Date().toISOString()
+  for (const p of parts) {
+    stmts.push(db.prepare(
+      `INSERT INTO site_parts
+        (id, site_id, sort_order, name, quantity, start_date, end_date, created_at, updated_at)
+       VALUES (?,?,?,?,?,?,?,?,?)`
+    ).bind(p.id, siteId, p.sort_order, p.name, p.quantity, p.start_date, p.end_date, now, now))
+  }
+  if (stmts.length > 0) {
+    await db.batch(stmts)
+  }
+}
+
+// 指定した複数 site_id の parts を一気に取得し、site_id をキーにしたマップで返す。
+// (site_parts テーブルが未作成の旧環境でも落ちないようにエラー時は空マップを返す)
+async function fetchPartsBySiteIds(db: D1Database, siteIds: string[]): Promise<Record<string, any[]>> {
+  const map: Record<string, any[]> = {}
+  if (!siteIds || siteIds.length === 0) return map
+  try {
+    // IN 句のプレースホルダを動的に生成
+    const placeholders = siteIds.map(() => '?').join(',')
+    const { results } = await db.prepare(
+      `SELECT id, site_id, sort_order, name, quantity, start_date, end_date, created_at, updated_at
+         FROM site_parts
+        WHERE site_id IN (${placeholders})
+        ORDER BY site_id ASC, sort_order ASC, created_at ASC`
+    ).bind(...siteIds).all<SitePartRow>()
+    for (const r of (results || [])) {
+      const sid = r.site_id
+      if (!map[sid]) map[sid] = []
+      map[sid].push(partRowToObj(r))
+    }
+  } catch (e) {
+    // site_parts テーブル未作成等の場合: 全現場 parts: [] として扱う
+    return {}
+  }
+  return map
+}
+
 // 入力値のサニタイズ (POST/PUT 共通)
 function sanitizeSiteInput(b: any) {
   const toStr = (v: any) => (v === null || v === undefined) ? '' : String(v)
@@ -293,6 +409,7 @@ function sanitizeSiteInput(b: any) {
 }
 
 // 一覧取得: No順 (NULL は末尾、同 No は created_at 古い順)
+// 各 site に parts: [...] を合流させて返す。部位なしの現場は parts: [] になる。
 app.get('/api/sites', async (c) => {
   try {
     const { results } = await c.env.DB.prepare(
@@ -305,23 +422,31 @@ app.get('/api/sites', async (c) => {
          site_no ASC,
          created_at ASC`
     ).all<SiteRow>()
-    return c.json({ ok: true, sites: (results || []).map(rowToSite) })
+    const rows = results || []
+    const sitesArr = rows.map(rowToSite)
+    // 部位データを一括取得して結合
+    const partsMap = await fetchPartsBySiteIds(c.env.DB, sitesArr.map(s => s.id))
+    sitesArr.forEach((s: any) => { s.parts = partsMap[s.id] || [] })
+    return c.json({ ok: true, sites: sitesArr })
   } catch (e: any) {
     return c.json({ ok: false, error: String(e && e.message || e) }, 500)
   }
 })
 
-// 1件取得 (動作確認用 / 互換)
+// 1件取得 (動作確認用 / 互換) parts も付与
 app.get('/api/sites/:id', async (c) => {
   const id = c.req.param('id')
   const row = await c.env.DB.prepare(
     `SELECT * FROM sites WHERE id = ?`
   ).bind(id).first<SiteRow>()
   if (!row) return c.json({ ok: false, error: 'not_found' }, 404)
-  return c.json({ ok: true, site: rowToSite(row) })
+  const site: any = rowToSite(row)
+  const partsMap = await fetchPartsBySiteIds(c.env.DB, [id])
+  site.parts = partsMap[id] || []
+  return c.json({ ok: true, site })
 })
 
-// 新規登録
+// 新規登録 (parts も同時保存)
 app.post('/api/sites', async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}))
@@ -340,8 +465,18 @@ app.post('/api/sites', async (c) => {
       v.order_status, v.start_date, v.end_date, v.amount, v.memo, v.subcontract,
       now, now
     ).run()
+    // 部位を保存(0件なら何もしない)
+    const parts = sanitizePartsInput(body && body.parts)
+    if (parts.length > 0) {
+      await replacePartsForSite(c.env.DB, id, parts)
+    }
     const row = await c.env.DB.prepare(`SELECT * FROM sites WHERE id = ?`).bind(id).first<SiteRow>()
-    return c.json({ ok: true, site: row ? rowToSite(row) : null })
+    const site: any = row ? rowToSite(row) : null
+    if (site) {
+      const partsMap = await fetchPartsBySiteIds(c.env.DB, [id])
+      site.parts = partsMap[id] || []
+    }
+    return c.json({ ok: true, site })
   } catch (e: any) {
     return c.json({ ok: false, error: String(e && e.message || e) }, 500)
   }
@@ -371,8 +506,21 @@ app.put('/api/sites/:id', async (c) => {
       v.subcontract,
       now, id
     ).run()
+    // 部位を「DELETE → INSERT」で置き換え。
+    // body.parts が undefined の場合は parts に触れない仕様にすると、
+    // 「parts を空にしたい場合」と区別がつかないので、
+    // 「parts が配列であれば、その内容で置き換える(空配列なら全削除)」とする。
+    if (Array.isArray(body && body.parts)) {
+      const parts = sanitizePartsInput(body.parts)
+      await replacePartsForSite(c.env.DB, id, parts)
+    }
     const row = await c.env.DB.prepare(`SELECT * FROM sites WHERE id = ?`).bind(id).first<SiteRow>()
-    return c.json({ ok: true, site: row ? rowToSite(row) : null })
+    const site: any = row ? rowToSite(row) : null
+    if (site) {
+      const partsMap = await fetchPartsBySiteIds(c.env.DB, [id])
+      site.parts = partsMap[id] || []
+    }
+    return c.json({ ok: true, site })
   } catch (e: any) {
     return c.json({ ok: false, error: String(e && e.message || e) }, 500)
   }
@@ -396,6 +544,11 @@ app.post('/api/sites/import', async (c) => {
     const list: any[] = Array.isArray(body && body.sites) ? body.sites : []
     const stmts: D1PreparedStatement[] = []
     stmts.push(c.env.DB.prepare(`DELETE FROM sites`))
+    // sites を CASCADE 削除すると site_parts も連動削除されるが、
+    // 念のため明示的に DELETE しておく(旧スキーマで FK が効かないケースに対する保険)。
+    stmts.push(c.env.DB.prepare(`DELETE FROM site_parts`))
+    // 各 site の parts は site INSERT 後に site_id を bind して INSERT する必要があるため、
+    // ループ内で順次積み上げる。
     for (const s of list) {
       const v = sanitizeSiteInput(s)
       const id = (s && typeof s.id === 'string' && s.id) || ('s_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8))
@@ -412,6 +565,15 @@ app.post('/api/sites/import', async (c) => {
         v.order_status, v.start_date, v.end_date, v.amount, v.memo, v.subcontract,
         created, updated
       ))
+      // 部位 (任意)
+      const parts = sanitizePartsInput(s && s.parts)
+      for (const p of parts) {
+        stmts.push(c.env.DB.prepare(
+          `INSERT INTO site_parts
+            (id, site_id, sort_order, name, quantity, start_date, end_date, created_at, updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?)`
+        ).bind(p.id, id, p.sort_order, p.name, p.quantity, p.start_date, p.end_date, created, updated))
+      }
     }
     await c.env.DB.batch(stmts)
     return c.json({ ok: true, imported: list.length })
@@ -669,7 +831,73 @@ app.get('/', (c) => {
                 <label class="form-label">備考(任意)</label>
                 <textarea id="memo" class="form-input" rows={2} placeholder="備考事項があれば記入"></textarea>
               </div>
+
+              {/* ============ 部位別工程 (任意) ============
+                  - 現場の総数量を「部位」単位に分解して、各部位ごとの施工時期を入力する。
+                  - 登録された部位は、月別集計の予定数量・契約金額合計の按分に使われる(集計ロジックのみ)。
+                  - 工程表本体(工程バー / 行 / 列 / 印刷レイアウト)には一切影響しない。 */}
+              <div class="form-group form-group-full parts-section">
+                <label class="form-label">部位別工程(任意)</label>
+                <div class="form-help">
+                  部位ごとに施工開始日・施工終了日・数量を登録すると、月別集計が部位施工時期に基づいて計算されます。
+                  未入力でも登録できます(その場合は従来どおり現場全体の工期で按分されます)。
+                </div>
+
+                {/* 部位入力テーブル */}
+                <div class="parts-table-wrap">
+                  <table class="parts-table" id="partsTable">
+                    <thead>
+                      <tr>
+                        <th class="parts-th-name">部位名</th>
+                        <th class="parts-th-qty">数量(t)</th>
+                        <th class="parts-th-date">施工開始日</th>
+                        <th class="parts-th-date">施工終了日</th>
+                        <th class="parts-th-del"></th>
+                      </tr>
+                    </thead>
+                    <tbody id="partsTbody">
+                      {/* 行は JS で動的に追加・復元する */}
+                    </tbody>
+                  </table>
+                  <p id="partsEmptyMsg" class="parts-empty-msg">部位が登録されていません。「＋ 部位を追加」を押すと入力行が追加されます。</p>
+                </div>
+
+                {/* 追加ボタン + 数量サマリー */}
+                <div class="parts-actions">
+                  <button type="button" id="btnAddPart" class="btn btn-secondary btn-sm">
+                    <i class="fas fa-plus"></i> 部位を追加
+                  </button>
+                  <div id="partsSummary" class="parts-summary" aria-live="polite"></div>
+                </div>
+                <div class="error-msg" data-for="parts"></div>
+              </div>
             </div>
+
+            {/* 部位行のテンプレート(JS から複製して使う) */}
+            <template id="partRowTemplate">
+              <tr class="parts-row">
+                <td><input type="text" class="form-input part-name" placeholder="例：基礎 / 地中梁 / 柱 / 梁 / 壁 / スラブ / 土間 / 外構 / その他" list="partNameList" /></td>
+                <td><input type="number" class="form-input part-qty" placeholder="0" step="0.001" min="0" /></td>
+                <td><input type="date" class="form-input part-start" /></td>
+                <td><input type="date" class="form-input part-end" /></td>
+                <td>
+                  <button type="button" class="btn btn-text btn-part-del" title="この部位を削除" aria-label="削除">
+                    <i class="fas fa-trash"></i>
+                  </button>
+                </td>
+              </tr>
+            </template>
+            <datalist id="partNameList">
+              <option value="基礎" />
+              <option value="地中梁" />
+              <option value="柱" />
+              <option value="梁" />
+              <option value="壁" />
+              <option value="スラブ" />
+              <option value="土間" />
+              <option value="外構" />
+              <option value="その他" />
+            </datalist>
 
             <div class="form-actions">
               <button type="button" id="btnCancel" class="btn btn-text">キャンセル</button>

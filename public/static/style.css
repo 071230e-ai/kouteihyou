@@ -2173,3 +2173,115 @@ td.col-material-cell {
   content: none !important;
   display: none !important;
 }
+
+/* ============================================================
+ * 部位別工程 (現場登録/編集フォーム内のみ)
+ *  - 工程表本体 (.schedule-table, .gantt-*, 印刷レイアウト) には一切影響しない
+ *  - .parts-* 名前空間で独立
+ * ============================================================ */
+.parts-section {
+  margin-top: 8px;
+}
+.parts-table-wrap {
+  margin-top: 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f9fafb;
+  overflow: hidden;
+}
+.parts-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  background: #fff;
+}
+.parts-table thead th {
+  background: #f3f4f6;
+  color: #374151;
+  font-weight: 600;
+  padding: 8px 10px;
+  text-align: left;
+  border-bottom: 1px solid #e5e7eb;
+  white-space: nowrap;
+}
+.parts-table .parts-th-name { width: 32%; }
+.parts-table .parts-th-qty  { width: 16%; }
+.parts-table .parts-th-date { width: 20%; }
+.parts-table .parts-th-del  { width: 60px; text-align: center; }
+.parts-table tbody td {
+  padding: 6px 8px;
+  border-top: 1px solid #f1f3f5;
+  vertical-align: middle;
+}
+.parts-table tbody tr:first-child td { border-top: none; }
+.parts-table .form-input {
+  width: 100%;
+  padding: 6px 8px;
+  font-size: 14px;
+}
+.parts-table .part-qty {
+  text-align: right;
+}
+.parts-table .btn-part-del {
+  color: #b91c1c;
+  padding: 6px 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color .15s;
+}
+.parts-table .btn-part-del:hover {
+  background-color: #fef2f2;
+  border-color: #fecaca;
+}
+.parts-empty-msg {
+  margin: 10px 12px;
+  color: #9ca3af;
+  font-size: 13px;
+}
+.parts-empty-msg.is-hidden { display: none; }
+
+.parts-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+}
+.parts-actions .btn-sm {
+  font-size: 13px;
+  padding: 6px 12px;
+}
+.parts-summary {
+  flex: 1 1 auto;
+  font-size: 13px;
+  color: #4b5563;
+  background: #f3f4f6;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 6px 10px;
+  min-height: 32px;
+  line-height: 1.5;
+}
+.parts-summary .parts-summary-line { display: block; }
+.parts-summary .parts-summary-diff.warn {
+  color: #b45309;
+  font-weight: 600;
+}
+.parts-summary .parts-summary-diff.ok {
+  color: #15803d;
+  font-weight: 600;
+}
+.parts-row.has-row-error .form-input.has-error {
+  background-color: #fef2f2;
+}
+
+/* 集計画面 - 部位別集計セクションは既存の .summary-table を流用するため、
+   個別CSSは最小限。注記の見た目だけ揃える。 */
+.summary-parts-note {
+  font-size: 12px;
+  color: #6b7280;
+  margin: 6px 0 0;
+  line-height: 1.5;
+}

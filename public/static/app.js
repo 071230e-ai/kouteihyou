@@ -159,9 +159,53 @@
       amount: toNumberSafe(s.amount != null ? s.amount : s.contractAmount),
       memo: s.memo || '',
       subcontract: subcontract,             // 下請フラグ(boolean)
+      // 部位別工程: API レスポンスの parts 配列を正規化して保持。
+      // 旧データ・部位なしの現場では空配列。集計時にこの配列の有無で
+      // 「部位ベース按分」と「現場全体按分」を切り替える。
+      parts: normalizeParts(s.parts),
       createdAt: s.createdAt || new Date().toISOString(),
       updatedAt: s.updatedAt || new Date().toISOString()
     };
+  }
+  // 部位配列の正規化。
+  // - 不正な要素は捨てる
+  // - 並び順は sortOrder ASC、無ければ受け取り順
+  // - quantity は数値化、日付は 'YYYY-MM-DD' のみ受け付ける
+  function normalizeParts(arr) {
+    if (!Array.isArray(arr)) return [];
+    const dateOk = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+    const normalized = arr
+      .map((p, idx) => {
+        if (!p || typeof p !== 'object') return null;
+        const name = (p.name == null ? '' : String(p.name)).trim();
+        const quantity = Number(p.quantity);
+        const sd = dateOk(p.startDate) ? p.startDate : '';
+        const ed = dateOk(p.endDate) ? p.endDate : '';
+        const id = (typeof p.id === 'string' && p.id) ? p.id : ('p_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8) + '_' + idx);
+        return {
+          id: id,
+          name: name,
+          quantity: isFinite(quantity) ? quantity : 0,
+          startDate: sd,
+          endDate: ed,
+          sortOrder: isFinite(Number(p.sortOrder)) ? Number(p.sortOrder) : idx,
+        };
+      })
+      .filter(Boolean);
+    normalized.sort((a, b) => (a.sortOrder - b.sortOrder));
+    return normalized;
+  }
+  // 部位が「集計対象として有効」かを判定する。
+  // 仕様: 名前あり + 数量>0 + 開始日/終了日が両方あり、終了日 >= 開始日 の行のみ集計対象。
+  // 入力途中の不完全行は集計に巻き込まないことで、表示の安定性を確保する。
+  function isPartUsableForSummary(p) {
+    if (!p) return false;
+    if (!p.name) return false;
+    const q = Number(p.quantity);
+    if (!isFinite(q) || q <= 0) return false;
+    if (!p.startDate || !p.endDate) return false;
+    if (p.startDate > p.endDate) return false;
+    return true;
   }
   // 番号未設定のデータには採番しない(仕様9: 番号なしはリスト末尾に表示)
   // 互換エイリアス維持のためのみ呼ぶ
@@ -614,6 +658,184 @@
       resetForm();
       document.querySelector('.tab-btn[data-tab="schedule"]').click();
     });
+
+    // ---- 部位別工程: 追加ボタン ----
+    const addPartBtn = document.getElementById('btnAddPart');
+    if (addPartBtn) {
+      addPartBtn.addEventListener('click', () => {
+        addPartRow();
+        updatePartsSummary();
+      });
+    }
+    // 部位テーブル内の操作(削除ボタン、入力変更)をデリゲートで監視
+    const partsTbody = document.getElementById('partsTbody');
+    if (partsTbody) {
+      partsTbody.addEventListener('click', (e) => {
+        const delBtn = e.target.closest('.btn-part-del');
+        if (delBtn) {
+          const tr = delBtn.closest('tr.parts-row');
+          if (tr && tr.parentNode) tr.parentNode.removeChild(tr);
+          updatePartsSummary();
+        }
+      });
+      partsTbody.addEventListener('input', () => {
+        updatePartsSummary();
+      });
+      partsTbody.addEventListener('change', () => {
+        updatePartsSummary();
+      });
+    }
+    // 総数量(現場全体) を変更したら部位合計との差表示を更新
+    const qtyInput = document.getElementById('quantity');
+    if (qtyInput) {
+      qtyInput.addEventListener('input', () => updatePartsSummary());
+    }
+  }
+
+  // ---- 部位別工程: 行操作ユーティリティ ----
+  // 入力行を 1 行追加する。引数 part が与えられれば値を埋める(編集時の復元用)。
+  function addPartRow(part) {
+    const tbody = document.getElementById('partsTbody');
+    const tpl = document.getElementById('partRowTemplate');
+    if (!tbody || !tpl) return null;
+    const frag = tpl.content.cloneNode(true);
+    const tr = frag.querySelector('tr.parts-row');
+    if (part) {
+      const nameEl = tr.querySelector('.part-name');
+      const qtyEl = tr.querySelector('.part-qty');
+      const sdEl = tr.querySelector('.part-start');
+      const edEl = tr.querySelector('.part-end');
+      if (nameEl) nameEl.value = part.name || '';
+      if (qtyEl) qtyEl.value = (part.quantity != null && part.quantity !== '') ? part.quantity : '';
+      if (sdEl) sdEl.value = part.startDate || '';
+      if (edEl) edEl.value = part.endDate || '';
+      // 部位IDがあれば保持(更新時に維持するため)
+      if (part.id) tr.dataset.partId = part.id;
+    }
+    tbody.appendChild(tr);
+    refreshPartsEmptyMsg();
+    return tr;
+  }
+  // 「部位がありません」のメッセージ表示制御
+  function refreshPartsEmptyMsg() {
+    const tbody = document.getElementById('partsTbody');
+    const msg = document.getElementById('partsEmptyMsg');
+    if (!tbody || !msg) return;
+    if (tbody.children.length > 0) msg.classList.add('is-hidden');
+    else msg.classList.remove('is-hidden');
+  }
+  // フォーム内の部位入力を、保存用の配列として取り出す。
+  // 空白行は除外し、各行に sortOrder を付与。
+  function collectPartsFromForm() {
+    const tbody = document.getElementById('partsTbody');
+    if (!tbody) return [];
+    const rows = Array.from(tbody.querySelectorAll('tr.parts-row'));
+    const out = [];
+    rows.forEach((tr, idx) => {
+      const name = (tr.querySelector('.part-name') || {}).value || '';
+      const qtyRaw = (tr.querySelector('.part-qty') || {}).value || '';
+      const sd = (tr.querySelector('.part-start') || {}).value || '';
+      const ed = (tr.querySelector('.part-end') || {}).value || '';
+      const nameT = String(name).trim();
+      const qty = qtyRaw === '' ? 0 : Number(qtyRaw);
+      // 完全に空白の行は除外する
+      if (!nameT && !qtyRaw && !sd && !ed) return;
+      out.push({
+        id: tr.dataset.partId || ('p_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8) + '_' + idx),
+        name: nameT,
+        quantity: isFinite(qty) ? qty : 0,
+        startDate: sd || '',
+        endDate: ed || '',
+        sortOrder: idx,
+      });
+    });
+    return out;
+  }
+  // 各部位行を個別にバリデーションする。OK なら true, 1件でも NG なら false。
+  // 行レベルのエラーは行に has-row-error クラスを付け、各 input に has-error を付ける。
+  function validatePartsInForm() {
+    const tbody = document.getElementById('partsTbody');
+    if (!tbody) return true;
+    const rows = Array.from(tbody.querySelectorAll('tr.parts-row'));
+    let ok = true;
+    let firstErr = null;
+    rows.forEach((tr) => {
+      tr.classList.remove('has-row-error');
+      tr.querySelectorAll('.form-input').forEach(el => el.classList.remove('has-error'));
+      const nameEl = tr.querySelector('.part-name');
+      const qtyEl = tr.querySelector('.part-qty');
+      const sdEl = tr.querySelector('.part-start');
+      const edEl = tr.querySelector('.part-end');
+      const name = (nameEl && nameEl.value || '').trim();
+      const qtyRaw = (qtyEl && qtyEl.value || '');
+      const qty = qtyRaw === '' ? null : Number(qtyRaw);
+      const sd = (sdEl && sdEl.value || '');
+      const ed = (edEl && edEl.value || '');
+      // 完全空白行はバリデーション対象外 (保存時に除外される)
+      if (!name && !qtyRaw && !sd && !ed) return;
+      // 入力があるなら全項目が揃っている必要がある
+      let rowOk = true;
+      if (!name)               { if (nameEl) nameEl.classList.add('has-error'); rowOk = false; }
+      if (qty == null || !isFinite(qty) || qty <= 0) { if (qtyEl) qtyEl.classList.add('has-error'); rowOk = false; }
+      if (!sd)                 { if (sdEl) sdEl.classList.add('has-error'); rowOk = false; }
+      if (!ed)                 { if (edEl) edEl.classList.add('has-error'); rowOk = false; }
+      if (sd && ed && sd > ed) { if (edEl) edEl.classList.add('has-error'); rowOk = false; }
+      if (!rowOk) {
+        tr.classList.add('has-row-error');
+        ok = false;
+        if (!firstErr) firstErr = tr;
+      }
+    });
+    if (!ok) {
+      const errEl = document.querySelector('.error-msg[data-for="parts"]');
+      if (errEl) errEl.textContent = '部位別工程の入力に不備があります(赤枠の項目を確認してください)';
+      if (firstErr) firstErr.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+    return ok;
+  }
+  // 現場全体数量と部位数量合計の差を表示。警告のみで、自動修正はしない。
+  function updatePartsSummary() {
+    const sumEl = document.getElementById('partsSummary');
+    if (!sumEl) return;
+    const tbody = document.getElementById('partsTbody');
+    refreshPartsEmptyMsg();
+    if (!tbody || tbody.children.length === 0) {
+      sumEl.innerHTML = '';
+      return;
+    }
+    const parts = collectPartsFromForm();
+    const partsTotal = parts.reduce((a, p) => a + (Number(p.quantity) || 0), 0);
+    const siteTotalRaw = Number((document.getElementById('quantity') || {}).value);
+    const siteTotal = isFinite(siteTotalRaw) ? siteTotalRaw : 0;
+    const diff = +(partsTotal - siteTotal).toFixed(3);
+    const fmt = (v) => v.toLocaleString('ja-JP', { maximumFractionDigits: 3 });
+    let diffHtml = '';
+    if (parts.length === 0) {
+      sumEl.innerHTML = '';
+      return;
+    }
+    if (siteTotal > 0 && Math.abs(diff) > 0.0005) {
+      const sign = diff > 0 ? '+' : '';
+      diffHtml = `<span class="parts-summary-diff warn">差：${sign}${fmt(diff)} t (一致しません)</span>`;
+    } else if (siteTotal > 0) {
+      diffHtml = `<span class="parts-summary-diff ok">差：0 t (一致)</span>`;
+    } else {
+      diffHtml = `<span class="parts-summary-diff">現場全体数量が未入力のため差分は計算されません</span>`;
+    }
+    sumEl.innerHTML = `
+      <span class="parts-summary-line">現場全体数量：${fmt(siteTotal)} t</span>
+      <span class="parts-summary-line">部位別数量合計：${fmt(partsTotal)} t</span>
+      <span class="parts-summary-line">${diffHtml}</span>
+    `;
+  }
+  // 全部位行をクリア
+  function clearPartsRows() {
+    const tbody = document.getElementById('partsTbody');
+    if (!tbody) return;
+    while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
+    refreshPartsEmptyMsg();
+    const sumEl = document.getElementById('partsSummary');
+    if (sumEl) sumEl.innerHTML = '';
   }
 
   function clearErrors() {
@@ -691,9 +913,33 @@
     }
     if (data.amount === null || data.amount === undefined || isNaN(data.amount) || data.amount < 0) { setError('amount', '契約金額を入力してください(0以上の数値)'); ok = false; }
 
+    // 部位別工程: 入力行を検証 + 収集 (完全空白行は除外)
+    const partsErr = document.querySelector('.error-msg[data-for="parts"]');
+    if (partsErr) partsErr.textContent = '';
+    const partsValid = validatePartsInForm();
+    if (!partsValid) ok = false;
+    const partsForSave = collectPartsFromForm();
+    data.parts = partsForSave;
+
+    // 部位数量合計と現場全体数量の差は「警告のみ」で保存はブロックしない (仕様)
+    if (partsValid && partsForSave.length > 0 && data.quantity > 0) {
+      const partsTotal = partsForSave.reduce((a, p) => a + (Number(p.quantity) || 0), 0);
+      const diff = +(partsTotal - data.quantity).toFixed(3);
+      if (Math.abs(diff) > 0.0005) {
+        const fmt = (v) => v.toLocaleString('ja-JP', { maximumFractionDigits: 3 });
+        const proceed = confirm(
+          `部位別数量合計 (${fmt(partsTotal)} t) が、現場全体数量 (${fmt(data.quantity)} t) と一致しません (差: ${diff > 0 ? '+' : ''}${fmt(diff)} t)。\n` +
+          `数量は自動修正されません。このまま保存しますか?`
+        );
+        if (!proceed) {
+          ok = false;
+        }
+      }
+    }
+
     if (!ok) {
       showToast('入力に不備があります', 'error');
-      const firstErr = document.querySelector('.has-error');
+      const firstErr = document.querySelector('.has-error') || document.querySelector('.parts-row.has-row-error');
       if (firstErr) firstErr.scrollIntoView({ behavior: 'smooth', block: 'center' });
       return;
     }
@@ -741,6 +987,8 @@
     // 下請チェックは form.reset() で未チェックに戻るが、明示的にも初期化(将来の改変に対する保険)
     const subEl = document.getElementById('subcontract');
     if (subEl) subEl.checked = false;
+    // 部位入力をクリア (form.reset() は <tbody> 内の動的行を消さないため明示的に削除)
+    clearPartsRows();
     document.getElementById('saveLabel').textContent = '登録する';
     clearErrors();
   }
@@ -767,6 +1015,11 @@
     if (subEl) {
       subEl.checked = (site.subcontract === true || site.subcontract === 1 || site.subcontract === '1');
     }
+    // 部位別工程を復元 (まず一旦クリアしてから1行ずつ追加)
+    clearPartsRows();
+    const parts = Array.isArray(site.parts) ? site.parts : [];
+    parts.forEach(p => addPartRow(p));
+    updatePartsSummary();
     document.getElementById('saveLabel').textContent = '更新する';
     clearErrors();
     document.querySelector('.tab-btn[data-tab="register"]').click();
@@ -1103,41 +1356,132 @@
     // 材料区分別 (現仕様: 「材工」「支給材」の2択)
     const byMaterial = groupBy(rangeSites, s => normalizeMaterial(s.material) || '(未設定)');
 
-    // 月別
-    // 仕様: 予定数量・契約金額合計の按分の「分母」は、
-    //       表示期間に切り詰めた日数ではなく、各現場の本来の工期全日数(sd〜ed)を使う。
-    //       → 表示期間を切り替えても、同じ月の予定数量・契約金額合計が変わらない。
-    //       稼働現場数の数え方は従来通り(その月に1日でも工期が重なれば1件)。
+    // 月別集計
+    // 仕様:
+    //  ・按分の分母は「現場(または部位) 本来の工期全日数」で固定する。
+    //    → 表示期間を切り替えても、同じ月の予定数量・契約金額合計が変わらない。
+    //  ・部位別工程が1件以上ある現場は、部位別の施工期間で按分する。
+    //    - 各部位の月別数量 = 部位数量 × (その月の部位施工期間との重なり日数) / 部位施工期間の全日数
+    //    - 各部位への金額配分 = 現場契約金額 × 部位数量 / 全部位数量合計
+    //    - 各月の金額          = 部位への配分額 × (その月の部位施工期間との重なり日数) / 部位施工期間の全日数
+    //  ・部位が1件もない現場は、従来どおり「現場全体の数量・契約金額」を現場本来の工期全日数で按分する。
+    //  ・稼働現場数は、現場全体の工期(sd〜ed) が1日でもその月に重なれば +1。
+    //    部位数で増やさない (現場単位でのカウントを維持)。
+
+    // 月の月初・月末 Date を 12ヶ月ぶん事前生成 (パフォーマンスのため)
+    const monthBounds = months.map(m => {
+      const first = new Date(m.year, m.month, 1);
+      const lastDay = new Date(m.year, m.month + 1, 0).getDate();
+      const last = new Date(m.year, m.month, lastDay, 23, 59, 59);
+      return { first, last };
+    });
+
     const monthly = months.map(() => ({ active: 0, qty: 0, amount: 0 }));
+
+    // 部位別集計 (集計画面の「部位別集計」セクション用)
+    // 同じ部位名で複数の現場/部位がある場合は、名前ごとに合算する。
+    const byPart = {};   // name -> { name, count, qty, amount, minStart, maxEnd }
+    const sitesWithParts = [];   // 部位ベース集計に該当した現場(注記用)
+
     rangeSites.forEach(s => {
       const sd = toDate(s.startDate);
       const ed = toDate(s.endDate);
       if (!sd || !ed) return;
-      // 月との重なり判定用には、表示期間に切り詰めた範囲を使う(従来通り、表示期間外の月をスキップするため)
-      const segStart = sd < rangeStart ? rangeStart : sd;
-      const segEnd = ed > rangeEnd ? rangeEnd : ed;
-      // 按分の分母は「現場本来の工期全日数」で固定
-      const totalDays = Math.floor((ed - sd) / 86400000) + 1;
-      const qty = Number(s.quantity) || 0;
-      const amt = Number(s.amount) || 0;
+      const siteAmt = Number(s.amount) || 0;
 
+      // この現場に「集計に使える部位」が1件でもあるか?
+      const allParts = Array.isArray(s.parts) ? s.parts : [];
+      const usableParts = allParts.filter(isPartUsableForSummary);
+      const usePartBased = usableParts.length > 0;
+
+      // 稼働現場数: その月に現場全体工期が1日でも重なれば +1 (部位の有無に関係なく)
       for (let i = 0; i < months.length; i++) {
-        const m = months[i];
-        const monthFirst = new Date(m.year, m.month, 1);
-        const monthLastDay = new Date(m.year, m.month + 1, 0).getDate();
-        const monthLast = new Date(m.year, m.month, monthLastDay, 23, 59, 59);
-        if (segEnd < monthFirst || segStart > monthLast) continue;
-        const a = segStart > monthFirst ? segStart : monthFirst;
-        const b = segEnd < monthLast ? segEnd : monthLast;
-        const dInMonth = Math.floor((b - a) / 86400000) + 1;
-        const ratio = totalDays > 0 ? dInMonth / totalDays : 0;
+        const mf = monthBounds[i].first;
+        const ml = monthBounds[i].last;
+        if (ed < mf || sd > ml) continue;
         monthly[i].active++;
-        monthly[i].qty += qty * ratio;
-        monthly[i].amount += amt * ratio;
+      }
+
+      if (usePartBased) {
+        sitesWithParts.push(s);
+        // 部位への金額配分(各部位数量の比率)。
+        // 全部位数量合計が 0 (例: 全部位が 0t) の場合は金額を 0 として扱う。
+        const totalPartQty = usableParts.reduce((a, p) => a + (Number(p.quantity) || 0), 0);
+        usableParts.forEach(p => {
+          const psd = toDate(p.startDate);
+          const ped = toDate(p.endDate);
+          if (!psd || !ped) return;
+          const partTotalDays = Math.floor((ped - psd) / 86400000) + 1;
+          if (partTotalDays <= 0) return;
+          const partQty = Number(p.quantity) || 0;
+          const partAmt = totalPartQty > 0 ? (siteAmt * partQty / totalPartQty) : 0;
+
+          // 月別ループ: 月と部位施工期間の重なり (表示期間で切り詰めない)
+          for (let i = 0; i < months.length; i++) {
+            const mf = monthBounds[i].first;
+            const ml = monthBounds[i].last;
+            if (ped < mf || psd > ml) continue;
+            const a = psd > mf ? psd : mf;
+            const b = ped < ml ? ped : ml;
+            const dInMonth = Math.floor((b - a) / 86400000) + 1;
+            const ratio = dInMonth / partTotalDays;
+            monthly[i].qty += partQty * ratio;
+            monthly[i].amount += partAmt * ratio;
+          }
+
+          // 部位別集計の累積
+          const key = p.name || '(未設定)';
+          if (!byPart[key]) {
+            byPart[key] = { name: key, count: 0, qty: 0, amount: 0, minStart: '', maxEnd: '' };
+          }
+          const e = byPart[key];
+          e.count++;
+          e.qty += partQty;
+          e.amount += partAmt;
+          if (!e.minStart || p.startDate < e.minStart) e.minStart = p.startDate;
+          if (!e.maxEnd   || p.endDate   > e.maxEnd  ) e.maxEnd   = p.endDate;
+        });
+      } else {
+        // 従来ロジック: 現場全体の数量・金額を、現場本来の工期全日数で按分
+        const totalDays = Math.floor((ed - sd) / 86400000) + 1;
+        if (totalDays <= 0) return;
+        const qty = Number(s.quantity) || 0;
+        for (let i = 0; i < months.length; i++) {
+          const mf = monthBounds[i].first;
+          const ml = monthBounds[i].last;
+          if (ed < mf || sd > ml) continue;
+          const a = sd > mf ? sd : mf;
+          const b = ed < ml ? ed : ml;
+          const dInMonth = Math.floor((b - a) / 86400000) + 1;
+          const ratio = dInMonth / totalDays;
+          monthly[i].qty += qty * ratio;
+          monthly[i].amount += siteAmt * ratio;
+        }
       }
     });
 
-    return { months, overall, byManager, byStructure, byMaterial, monthly };
+    // 部位別集計を [name, value] の配列に整形 (金額の大きい順)
+    const byPartEntries = Object.values(byPart)
+      .sort((a, b) => b.amount - a.amount)
+      .map(v => [v.name, {
+        count: v.count,
+        qty: v.qty,
+        amount: v.amount,
+        minStart: v.minStart,
+        maxEnd: v.maxEnd,
+      }]);
+
+    return {
+      months,
+      overall,
+      byManager,
+      byStructure,
+      byMaterial,
+      monthly,
+      byPart: byPartEntries,
+      hasPartBasedSites: sitesWithParts.length > 0,
+      partBasedSiteCount: sitesWithParts.length,
+    };
   }
   function groupBy(arr, keyFn) {
     const map = {};
@@ -1242,11 +1586,64 @@
             </tr>
           </tfoot>
         </table>
-        <p style="font-size:12px;color:#95a5a6;margin:8px 0 0">※ 数量・金額は工期日数で月按分した参考値です。</p>
+        <p class="summary-parts-note">※ 部位別工程が登録されている現場は、部位ごとの施工期間と数量を基に月別集計しています。部位別工程がない現場は、現場全体の工期日数で按分しています。</p>
       </div>
     `;
 
+    // 部位別 集計 (部位が1件でも登録されている場合のみ表示)
+    html += renderPartsSummarySection(data);
+
     container.innerHTML = html;
+  }
+
+  // ---------- 部位別 集計 (集計画面に追加表示) ----------
+  // 仕様:
+  //  ・部位名 / 数量合計 / 施工開始日 / 施工終了日 / 契約金額配分 のみを表示する簡潔な表
+  //  ・月別マトリクスのような大きな表は今回追加しない
+  function renderPartsSummarySection(data) {
+    const entries = (data && data.byPart) || [];
+    if (entries.length === 0) {
+      // 表示期間内に部位を持つ現場が無い場合は、セクション自体を表示しない
+      return '';
+    }
+    const totalQty = entries.reduce((a, [, v]) => a + v.qty, 0);
+    const totalAmt = entries.reduce((a, [, v]) => a + v.amount, 0);
+    const rows = entries.map(([name, v]) => `
+      <tr>
+        <td>${escapeHtml(name || '(未設定)')}</td>
+        <td class="num">${v.qty.toLocaleString('ja-JP', { maximumFractionDigits: 2 })} t</td>
+        <td>${v.minStart ? escapeHtml(v.minStart) : '—'}</td>
+        <td>${v.maxEnd   ? escapeHtml(v.maxEnd)   : '—'}</td>
+        <td class="num">¥${fmtAmount(Math.round(v.amount))}</td>
+      </tr>
+    `).join('');
+    return `
+      <div class="summary-section">
+        <h3 class="summary-section-title">部位別 集計(${getRangeLabel()})</h3>
+        <table class="summary-table">
+          <thead>
+            <tr>
+              <th>部位名</th>
+              <th class="num">数量合計</th>
+              <th>施工開始日</th>
+              <th>施工終了日</th>
+              <th class="num">契約金額配分</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+          <tfoot>
+            <tr>
+              <td>合計</td>
+              <td class="num">${totalQty.toLocaleString('ja-JP', { maximumFractionDigits: 2 })} t</td>
+              <td>—</td>
+              <td>—</td>
+              <td class="num">¥${fmtAmount(Math.round(totalAmt))}</td>
+            </tr>
+          </tfoot>
+        </table>
+        <p class="summary-parts-note">※ 部位別工程が登録されている現場 (${data.partBasedSiteCount} 件) の合算です。施工開始/終了日は同名部位の最早開始日・最遅終了日を表示しています。</p>
+      </div>
+    `;
   }
 
   function renderBreakdownTable(title, keyLabel, entries, tagType) {
@@ -1777,36 +2174,11 @@
       html += `</div>`;
     }
 
-    // 月別 (画面と同じ12ヶ月分。日数で按分した参考値)
-    // 仕様: 画面側 computeSummary() と同じく、按分の分母は現場本来の工期全日数(sd〜ed)。
-    //       表示期間を切り替えても、同じ月の予定数量・契約金額合計が変わらない。
-    const months = buildMonthList(startYear, startMonth, 12);
-    const monthly = months.map(() => ({ active: 0, qty: 0, amount: 0 }));
-    filtered.forEach(s => {
-      const sd = toDate(s.startDate);
-      const ed = toDate(s.endDate);
-      if (!sd || !ed) return;
-      const segStart = sd < rangeStart ? rangeStart : sd;
-      const segEnd = ed > rangeEnd ? rangeEnd : ed;
-      // 按分の分母は「現場本来の工期全日数」で固定
-      const totalDays = Math.floor((ed - sd) / 86400000) + 1;
-      const qty = Number(s.quantity) || 0;
-      const amt = Number(s.amount) || 0;
-      for (let i = 0; i < months.length; i++) {
-        const m = months[i];
-        const monthFirst = new Date(m.year, m.month, 1);
-        const monthLastDay = new Date(m.year, m.month + 1, 0).getDate();
-        const monthLast = new Date(m.year, m.month, monthLastDay, 23, 59, 59);
-        if (segEnd < monthFirst || segStart > monthLast) continue;
-        const a2 = segStart > monthFirst ? segStart : monthFirst;
-        const b2 = segEnd < monthLast ? segEnd : monthLast;
-        const dInMonth = Math.floor((b2 - a2) / 86400000) + 1;
-        const ratio = totalDays > 0 ? dInMonth / totalDays : 0;
-        monthly[i].active++;
-        monthly[i].qty += qty * ratio;
-        monthly[i].amount += amt * ratio;
-      }
-    });
+    // 月別 (画面と同じ12ヶ月分。computeSummary() の結果をそのまま使用することで、
+    //       画面・PDF・CSV が同じ計算結果になることを保証する)
+    const summaryData = computeSummary();
+    const months = summaryData.months;
+    const monthly = summaryData.monthly;
     const monthlyTotalQty = monthly.reduce((a, d) => a + d.qty, 0);
     const monthlyTotalAmt = monthly.reduce((a, d) => a + d.amount, 0);
     html += `<div class="pdf-summary-section">`;
@@ -1831,8 +2203,44 @@
     html +=     `<td style="text-align:right;font-weight:700">¥${fmtAmount(Math.round(monthlyTotalAmt))}</td>`;
     html +=   `</tr></tfoot>`;
     html +=   `</table>`;
-    html +=   `<p style="font-size:10px;color:#95a5a6;margin:6px 0 0">※ 数量・金額は工期日数で月按分した参考値です。</p>`;
+    html +=   `<p style="font-size:10px;color:#95a5a6;margin:6px 0 0">※ 部位別工程が登録されている現場は部位施工期間で月按分、それ以外は現場の工期全日数で月按分しています。</p>`;
     html += `</div>`;
+
+    // 部位別集計 (任意。部位を持つ現場がある場合のみ追加。月別マトリクスは追加しない)
+    const partsEntries = summaryData.byPart || [];
+    if (partsEntries.length > 0) {
+      const partsTotalQty = partsEntries.reduce((a, [, v]) => a + v.qty, 0);
+      const partsTotalAmt = partsEntries.reduce((a, [, v]) => a + v.amount, 0);
+      html += `<div class="pdf-summary-section">`;
+      html +=   `<h3 class="pdf-summary-title">部位別 集計</h3>`;
+      html +=   `<table class="pdf-stable"><thead><tr>`;
+      html +=     `<th style="width:24%">部位名</th>`;
+      html +=     `<th style="width:18%">数量合計</th>`;
+      html +=     `<th style="width:18%">施工開始日</th>`;
+      html +=     `<th style="width:18%">施工終了日</th>`;
+      html +=     `<th style="width:22%">契約金額配分</th>`;
+      html +=   `</tr></thead><tbody>`;
+      partsEntries.forEach(([name, v]) => {
+        html += `<tr>`;
+        html += `<td>${escapeHtml(name || '(未設定)')}</td>`;
+        html += `<td style="text-align:right">${fmtTons(v.qty)}</td>`;
+        html += `<td>${v.minStart ? escapeHtml(v.minStart) : '—'}</td>`;
+        html += `<td>${v.maxEnd   ? escapeHtml(v.maxEnd)   : '—'}</td>`;
+        html += `<td style="text-align:right">¥${fmtAmount(Math.round(v.amount))}</td>`;
+        html += `</tr>`;
+      });
+      html +=   `</tbody>`;
+      html +=   `<tfoot><tr>`;
+      html +=     `<td style="font-weight:700">合計</td>`;
+      html +=     `<td style="text-align:right;font-weight:700">${fmtTons(partsTotalQty)}</td>`;
+      html +=     `<td>—</td>`;
+      html +=     `<td>—</td>`;
+      html +=     `<td style="text-align:right;font-weight:700">¥${fmtAmount(Math.round(partsTotalAmt))}</td>`;
+      html +=   `</tr></tfoot>`;
+      html +=   `</table>`;
+      html +=   `<p style="font-size:10px;color:#95a5a6;margin:6px 0 0">※ 部位別工程が登録されている現場 (${summaryData.partBasedSiteCount} 件) の合算です。</p>`;
+      html += `</div>`;
+    }
 
     area.innerHTML = html;
     return area;
@@ -2062,7 +2470,7 @@
   // 集計CSV出力
   function exportSummaryCSV() {
     const data = computeSummary();
-    const { months, overall, byManager, byStructure, byMaterial, monthly } = data;
+    const { months, overall, byManager, byStructure, byMaterial, monthly, byPart } = data;
     const lines = [];
 
     // ヘッダー(タイトル)
@@ -2116,6 +2524,19 @@
       const m = months[i];
       lines.push([`${m.year}年${m.month + 1}月`, d.active, d.qty.toFixed(3), Math.round(d.amount)]);
     });
+    lines.push(['※ 部位別工程が登録されている現場は部位施工期間で月按分、それ以外は現場の工期全日数で月按分しています。']);
+    lines.push([]);
+
+    // 部位別集計 (末尾。部位を持つ現場が無ければ「該当なし」のみ)
+    lines.push(['【部位別集計】']);
+    if (byPart && byPart.length > 0) {
+      lines.push(['部位名', '数量合計(t)', '施工開始日', '施工終了日', '契約金額配分(円)']);
+      byPart.forEach(([name, v]) => {
+        lines.push([name || '(未設定)', v.qty.toFixed(3), v.minStart || '', v.maxEnd || '', Math.round(v.amount)]);
+      });
+    } else {
+      lines.push(['(表示期間内に部位別工程が登録されている現場はありません)']);
+    }
 
     const csv = lines.map(r => r.map(csvCell).join(',')).join('\r\n');
     const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' });
