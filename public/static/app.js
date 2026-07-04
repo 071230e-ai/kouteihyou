@@ -628,6 +628,56 @@
     }
   }
 
+  // ---------- 現場名セル クリック→編集画面 ----------
+  //
+  // 仕様:
+  //   - 工程表(scheduleBody) / 現場一覧(listBody) の「現場名・工事内容」セル (.clickable-name-cell)
+  //     全体をクリックすると、data-site-id で指定された現場の編集画面を同じタブで開く。
+  //   - 識別は必ずデータベース上の一意な id を使用する (画面上の No ではない)。
+  //   - 権限が閲覧のみ (role-viewer) の場合はクリックを無効化する。
+  //   - 右側の工程バー (.gantt-bar / .month-cell) のクリック挙動には一切影響しない
+  //     (デリゲーションは .clickable-name-cell の内側でのみ発火する)。
+  //   - キャンセル/戻る/保存後に工程表へ戻った時、可能であれば元のスクロール位置を復元する。
+  let preEditScrollY = 0;
+  function rememberScrollForEdit() {
+    // 現在の工程表タブが表示されている前提で、直近のスクロール位置を覚えておく
+    preEditScrollY = window.scrollY || window.pageYOffset || 0;
+  }
+  function restoreScrollAfterEdit() {
+    // 編集画面から工程表へ戻った直後の1回だけ復元。以降は通常動作。
+    const y = preEditScrollY;
+    if (y > 0) {
+      // レンダリング完了後に復元 (renderSchedule が同期でも念のため次フレーム)
+      requestAnimationFrame(() => {
+        window.scrollTo({ top: y, behavior: 'auto' });
+      });
+    }
+  }
+
+  function setupNameCellClicks() {
+    // 工程表本体と現場一覧の両方に対して1回だけデリゲーション登録する。
+    // 動的に <tbody>.innerHTML を書き換えても、親要素にリスナーが残るためクリックは有効。
+    ['scheduleBody', 'listBody'].forEach(bodyId => {
+      const bodyEl = document.getElementById(bodyId);
+      if (!bodyEl || bodyEl.__nameClickBound) return;
+      bodyEl.__nameClickBound = true;
+      bodyEl.addEventListener('click', (ev) => {
+        // クリック元から一番近い .clickable-name-cell を探す。
+        // .gantt-bar など右側の要素からは絶対に到達しない。
+        const cell = ev.target.closest('.clickable-name-cell');
+        if (!cell) return;
+        if (!bodyEl.contains(cell)) return;
+        // 閲覧のみ権限の場合はクリック無効
+        if (document.body.classList.contains('role-viewer')) return;
+        const sid = cell.getAttribute('data-site-id');
+        if (!sid) return;
+        // スクロール位置を保存してから編集画面へ
+        rememberScrollForEdit();
+        loadFormForEdit(sid);
+      });
+    });
+  }
+
   // ---------- フォーム ----------
   function setupForm() {
     const form = document.getElementById('siteForm');
@@ -657,6 +707,8 @@
     document.getElementById('btnCancel').addEventListener('click', () => {
       resetForm();
       document.querySelector('.tab-btn[data-tab="schedule"]').click();
+      // 現場名クリックで編集画面に入っていた場合、元のスクロール位置に戻す
+      restoreScrollAfterEdit();
     });
 
     // ---- 部位別工程: 追加ボタン ----
@@ -975,6 +1027,8 @@
     renderSummary();
     updateManagerList();
     document.querySelector('.tab-btn[data-tab="schedule"]').click();
+    // 現場名クリックで編集画面に入っていた場合、元のスクロール位置に戻す
+    restoreScrollAfterEdit();
   }
 
   function resetForm() {
@@ -1151,7 +1205,9 @@
       const statusTag = paramTag(stStatus, statusClass(stStatus));
       // 左側のステータス/受注バッジは下請に関係なく従来どおりの色で表示する
       const tagsCls = `name-tags`;
-      row += `<td class="col-name col-info" title="${escapeAttr(s.name)}"><div class="name-cell"><span class="site-name-text">${escapeHtml(s.name)}</span><span class="${tagsCls}">${statusTag}${orderTag}</span></div></td>`;
+      // 現場名・工事内容セル: セル全体をクリック可能にし、対応する現場の編集画面へ遷移させる。
+      // (右側の工程バーには一切影響しない。識別は必ず一意な s.id を使用する。)
+      row += `<td class="col-name col-info clickable-name-cell" data-site-id="${escapeAttr(s.id)}" title="${escapeAttr(s.name)}\nクリックで編集"><div class="name-cell"><span class="site-name-text">${escapeHtml(s.name)}</span><span class="${tagsCls}">${statusTag}${orderTag}</span></div></td>`;
       // 担当・構造は通常テキスト(col-plain)、材料区分は丸型バッジ(青=支給材 / 緑=材工)で表示
       row += `<td class="col-manager col-info col-plain">${escapeHtml(s.manager || '')}</td>`;
       row += `<td class="col-structure col-info col-plain" title="${escapeAttr(s.structure || '')}">${escapeHtml(s.structure || '')}</td>`;
@@ -2661,6 +2717,7 @@
     setupForm();
     setupFilters();
     setupExport();
+    setupNameCellClicks();
     updatePrintDateLabels();
 
     // サーバ(D1) から最新データを取得 → 空なら初回サンプル投入
