@@ -51,10 +51,20 @@
   // ---------- ストレージ (Cloudflare D1 / REST API) ----------
   // すべての現場データはサーバー側 D1 に保存され、全デバイスで共有される。
   async function apiFetch(path, opts) {
+    // すべての API 呼び出しに X-User-Role ヘッダーを付与する。
+    // サーバー側は特に権限が必要な操作(例: /sites/reorder)でこのヘッダーを検証する。
+    // 既存の /sites などは無視するので後方互換に問題ない。
+    const baseHeaders = { 'Content-Type': 'application/json' };
+    try {
+      if (typeof currentRole === 'string' && currentRole) {
+        baseHeaders['X-User-Role'] = currentRole;
+      }
+    } catch (_) { /* ignore */ }
+    const userOpts = opts || {};
+    const mergedHeaders = Object.assign({}, baseHeaders, userOpts.headers || {});
     const res = await fetch(API_BASE + path, Object.assign({
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' }
-    }, opts || {}));
+      credentials: 'same-origin'
+    }, userOpts, { headers: mergedHeaders }));
     if (res.status === 401) {
       // セッション切れ → ログイン画面へ
       window.location.href = '/login';
@@ -135,10 +145,19 @@
     // → 既存データはフィールドが存在しないため、自動的に「下請なし」として扱われる
     const subcontract = (s.subcontract === true || s.subcontract === 1 || s.subcontract === '1');
 
+    // 表示順(sort_order): サーバー側 D1 の sort_order カラム。
+    // 値が数値なら数値化、null / undefined / 空 / NaN は null(=末尾)にする。
+    let sortOrder = null;
+    if (s.sortOrder !== undefined && s.sortOrder !== null && s.sortOrder !== '') {
+      const so = Number(s.sortOrder);
+      if (isFinite(so)) sortOrder = so;
+    }
+
     return {
       id: s.id || uid(),
       siteNo: siteNo,                       // 表示順用(任意)
       no: siteNo,                           // 互換用エイリアス(古いコードからの参照保護)
+      sortOrder: sortOrder,                 // 現場並び順 (sort_order)。null は末尾扱い。
       name: s.name || s.siteName || '',
       manager: s.manager || '',
       // 旧 kubun → structure に移行
@@ -248,6 +267,24 @@
     if (at !== bt) return at - bt;
     return String((a && a.id) || '').localeCompare(String((b && b.id) || ''));
   }
+  // 現場並び順比較(sort_order 優先)。
+  // 仕様:
+  //  1. sortOrder が数値の現場を先頭側(昇順)、null は末尾。
+  //  2. sortOrder が同値 or 両方 null なら compareByNo にフォールバック(No 昇順 → createdAt)。
+  // これにより、DB からの sort_order 値がまだ未振り(null)でも既存表示順を維持しつつ、
+  // 並び替え保存後は sort_order で強制的に並ぶ。
+  function compareBySortOrder(a, b) {
+    const aSo = (a && a.sortOrder != null && isFinite(Number(a.sortOrder))) ? Number(a.sortOrder) : null;
+    const bSo = (b && b.sortOrder != null && isFinite(Number(b.sortOrder))) ? Number(b.sortOrder) : null;
+    if (aSo != null && bSo != null) {
+      if (aSo !== bSo) return aSo - bSo;
+      return compareByNo(a, b);
+    }
+    if (aSo != null) return -1;   // b は null → b が末尾
+    if (bSo != null) return 1;    // a は null → a が末尾
+    return compareByNo(a, b);     // 両方 null なら No 順
+  }
+
   // 次の番号(新規登録時のデフォルト表示。ユーザーは空にもできる)
   function nextSiteNo() {
     const used = sites.map(s => Number(s.siteNo || s.no)).filter(n => isFinite(n) && n > 0);
@@ -662,6 +699,8 @@
       if (!bodyEl || bodyEl.__nameClickBound) return;
       bodyEl.__nameClickBound = true;
       bodyEl.addEventListener('click', (ev) => {
+        // 並び替えモード中はクリックによる編集画面遷移を完全にブロックする(競合防止)
+        if (document.body.classList.contains('reorder-mode')) return;
         // クリック元から一番近い .clickable-name-cell を探す。
         // .gantt-bar など右側の要素からは絶対に到達しない。
         const cell = ev.target.closest('.clickable-name-cell');
@@ -1156,6 +1195,8 @@
     // ヘッダー
     const headRow = document.getElementById('scheduleHeadRow');
     let head = '';
+    // 並び替えモード中のみ左端に表示されるドラッグハンドル用の列(通常時は CSS で幅0)
+    head += '<th class="col-drag-handle reorder-ui reorder-ui-active no-print" aria-label="並び替えハンドル"></th>';
     head += '<th class="col-no col-info">No</th>';
     head += '<th class="col-name col-info">現場名・工事内容</th>';
     head += '<th class="col-manager col-info">担当</th>';
@@ -1182,10 +1223,10 @@
       const ed = toDate(s.endDate);
       if (!sd || !ed) return false;
       return ed >= rangeStart && sd <= rangeEnd;
-    }).sort(compareByNo);
+    }).sort(compareBySortOrder);
 
     if (visible.length === 0) {
-      body.innerHTML = `<tr class="empty-row"><td colspan="20">表示期間(${getRangeLabel()})に該当する現場がありません。</td></tr>`;
+      body.innerHTML = `<tr class="empty-row"><td colspan="21">表示期間(${getRangeLabel()})に該当する現場がありません。</td></tr>`;
       renderSummaryBar(filtered);
       return;
     }
@@ -1195,7 +1236,10 @@
       const barInfo = computeBarSegment(s, months);
       const colorCls = barClassByMaterial(s.material);
       const tentativeCls = (s.orderStatus === '受注可能性') ? ' bar-tentative' : '';
-      let row = '<tr class="bar-row">';
+      // 現場行の識別に必ず一意な s.id を使う(No は表示用のみ)
+      let row = `<tr class="bar-row" data-site-id="${escapeAttr(s.id)}">`;
+      // ドラッグハンドルセル: 通常モードでは非表示(CSS)、並び替えモード時のみ表示
+      row += `<td class="col-drag-handle reorder-ui reorder-ui-active no-print"><span class="drag-handle" role="button" aria-label="ドラッグして並び替え">☰</span></td>`;
       // No 列: 番号未入力(null/空)の現場は「-」表示。並び順は末尾(compareByNo で保証)。
       const noDisp = (s.siteNo != null && s.siteNo !== '') ? s.siteNo
                    : (s.no != null && s.no !== '') ? s.no : '-';
@@ -1327,7 +1371,7 @@
       return (s.name || '').toLowerCase().includes(term) ||
              (s.manager || '').toLowerCase().includes(term) ||
              (s.structure || '').toLowerCase().includes(term);
-    }).sort(compareByNo);
+    }).sort(compareBySortOrder);
 
     if (list.length === 0) {
       tbody.innerHTML = `<tr class="empty-row"><td colspan="10">登録された現場はありません。</td></tr>`;
@@ -2668,6 +2712,329 @@
   // ---------- サンプルデータ ----------
   // サーバ(D1)が空の場合のみ初回サンプルを投入する。
   // ※ 本番運用ではサーバが空でも自動投入したくない場合があるが、
+  // ================================================================
+  // 現場並び替えモード (工程表画面)
+  // ----------------------------------------------------------------
+  // 仕様:
+  //  - 管理者(admin) のみ「現場並び替え」ボタンが表示される (role-viewer は CSS で非表示)
+  //  - 絞り込み条件が有効な間はボタンを押しても入れず、案内メッセージを表示する
+  //  - モード中は body.reorder-mode クラスを付与し、CSS で:
+  //     * ドラッグハンドル列を可視化
+  //     * 通常時ボタン(印刷/PDFなど)を非表示、保存/キャンセルボタンを表示
+  //     * .clickable-name-cell のクリック → 編集画面遷移を JS 側でブロック
+  //  - マウス(pointerdown/move/up) と タッチ(touchstart/move/end) の両方に対応
+  //  - 挿入位置には青色ラインを表示 / 画面上下端近くではオートスクロール
+  //  - 保存時は現在の <tr> 順から sortOrder=(idx+1)*10, siteNo=idx+1 を計算し
+  //    PUT /api/sites/reorder に一括送信 (D1 batch()) → 成功後 loadSites & 再描画
+  //  - キャンセル時はスナップショット (deep clone) から元の並び順・No に戻す
+  // ================================================================
+  function setupReorderMode() {
+    const btnStart = document.getElementById('btnReorderStart');
+    const btnSave = document.getElementById('btnReorderSave');
+    const btnCancel = document.getElementById('btnReorderCancel');
+    const blockedMsg = document.getElementById('reorderBlockedMsg');
+    const hintMsg = document.getElementById('reorderHintMsg');
+    if (!btnStart || !btnSave || !btnCancel) return;
+
+    // 起動時は補助メッセージは非表示 (HTML の inline style で display:none)
+    if (blockedMsg) blockedMsg.style.display = 'none';
+    if (hintMsg) hintMsg.style.display = 'none';
+
+    // ---- 状態 ----
+    let inReorderMode = false;
+    let snapshotSites = null;       // モード開始時の sites 配列(deep clone)
+    let dragging = null;            // 現在ドラッグ中の <tr>
+    let dragOffsetY = 0;            // ポインタと <tr> 上端の差分(視覚用)
+    let insertionLine = null;       // 挿入位置に表示する青ライン
+    let insertBefore = null;        // 挿入予定の兄弟 <tr>(null なら末尾)
+    let autoScrollTimer = null;     // オートスクロール用 setInterval id
+    let autoScrollDir = 0;          // -1 上 / 1 下 / 0 停止
+    let ghost = null;               // ドラッグ中のゴースト表示(座標追従用)
+    let activePointerId = null;
+
+    // ---- 絞り込み中かどうか判定 ----
+    function isAnyFilterActive() {
+      return !!(
+        filters.name || filters.manager || filters.structure ||
+        filters.material || filters.orderStatus ||
+        (filters.amountMin !== null && filters.amountMin !== undefined) ||
+        (filters.amountMax !== null && filters.amountMax !== undefined)
+      );
+    }
+
+    // ---- モード切替 ----
+    function enterReorderMode() {
+      if (inReorderMode) return;
+      if (currentRole !== 'admin') {
+        showToast('並び替えは管理者のみ実行できます', 'error');
+        return;
+      }
+      if (isAnyFilterActive()) {
+        showBlockedMsg();
+        return;
+      }
+      // スナップショット (deep clone)
+      snapshotSites = JSON.parse(JSON.stringify(sites));
+      document.body.classList.add('reorder-mode');
+      inReorderMode = true;
+      if (blockedMsg) blockedMsg.style.display = 'none';
+      if (hintMsg) hintMsg.style.display = '';
+      // 工程表タブへ強制切替(他タブから並び替えボタンを押されても大丈夫にするため)
+      const scheduleTabBtn = document.querySelector('.tab-btn[data-tab="schedule"]');
+      if (scheduleTabBtn && !scheduleTabBtn.classList.contains('active')) {
+        scheduleTabBtn.click();
+      }
+      renderSchedule();
+      attachDragListeners();
+    }
+    function exitReorderMode() {
+      if (!inReorderMode) return;
+      document.body.classList.remove('reorder-mode');
+      inReorderMode = false;
+      snapshotSites = null;
+      cleanupDragState();
+      detachDragListeners();
+      if (hintMsg) hintMsg.style.display = 'none';
+      if (blockedMsg) blockedMsg.style.display = 'none';
+    }
+    function showBlockedMsg() {
+      if (!blockedMsg) {
+        showToast('現場の並び替えを行うには、絞り込み条件をクリアしてください。', 'error');
+        return;
+      }
+      blockedMsg.style.display = '';
+      // 一定時間で自動的に消す(ボタンで手動クリアも可能)
+    }
+
+    // ---- ドラッグ関連 ----
+    function getScheduleBody() {
+      return document.getElementById('scheduleBody');
+    }
+    function cleanupDragState() {
+      if (autoScrollTimer) { clearInterval(autoScrollTimer); autoScrollTimer = null; }
+      autoScrollDir = 0;
+      if (insertionLine && insertionLine.parentNode) insertionLine.parentNode.removeChild(insertionLine);
+      insertionLine = null;
+      if (ghost && ghost.parentNode) ghost.parentNode.removeChild(ghost);
+      ghost = null;
+      if (dragging) dragging.classList.remove('dragging-row');
+      dragging = null;
+      insertBefore = null;
+      activePointerId = null;
+      document.body.classList.remove('reorder-dragging');
+    }
+
+    // ハンドル押下開始(ポインタ or タッチ)
+    function onHandlePointerDown(ev) {
+      if (!inReorderMode) return;
+      // 左クリック(ボタン0) or タッチ のみ受け付ける
+      if (ev.pointerType === 'mouse' && ev.button !== 0) return;
+      const handle = ev.target.closest('.drag-handle');
+      if (!handle) return;
+      const tr = handle.closest('tr.bar-row');
+      if (!tr) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      dragging = tr;
+      activePointerId = ev.pointerId;
+      const rect = tr.getBoundingClientRect();
+      dragOffsetY = ev.clientY - rect.top;
+      tr.classList.add('dragging-row');
+      document.body.classList.add('reorder-dragging');
+      // 挿入ラインの生成
+      const body = getScheduleBody();
+      if (!body) return;
+      insertionLine = document.createElement('div');
+      insertionLine.className = 'reorder-insertion-line';
+      document.body.appendChild(insertionLine);
+      // ポインタキャプチャ(要素外に出ても move/up が来るように)
+      try { handle.setPointerCapture(ev.pointerId); } catch (_) {}
+    }
+    function onHandlePointerMove(ev) {
+      if (!dragging) return;
+      if (activePointerId !== null && ev.pointerId !== activePointerId) return;
+      ev.preventDefault();
+      const body = getScheduleBody();
+      if (!body) return;
+      const rows = Array.from(body.querySelectorAll('tr.bar-row'))
+                     .filter(r => r !== dragging);
+      const clientY = ev.clientY;
+      // どの行の上/下に挿入するか判定
+      let targetBefore = null; // 次に挿入する兄弟 tr
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+        const rect = r.getBoundingClientRect();
+        const midY = rect.top + rect.height / 2;
+        if (clientY < midY) {
+          targetBefore = r;
+          break;
+        }
+      }
+      insertBefore = targetBefore;
+      // 挿入ライン位置を更新
+      let lineY;
+      if (targetBefore) {
+        const rect = targetBefore.getBoundingClientRect();
+        lineY = rect.top;
+      } else if (rows.length > 0) {
+        const rect = rows[rows.length - 1].getBoundingClientRect();
+        lineY = rect.bottom;
+      } else {
+        const rect = body.getBoundingClientRect();
+        lineY = rect.top;
+      }
+      // 工程表テーブルの水平範囲に合わせる
+      const tableEl = body.closest('table') || body;
+      const tRect = tableEl.getBoundingClientRect();
+      const left = tRect.left + window.scrollX;
+      const width = tRect.width;
+      if (insertionLine) {
+        insertionLine.style.top = (lineY + window.scrollY - 1) + 'px';
+        insertionLine.style.left = left + 'px';
+        insertionLine.style.width = width + 'px';
+      }
+      // オートスクロール判定
+      const viewportH = window.innerHeight || document.documentElement.clientHeight;
+      const EDGE = 60;
+      let dir = 0;
+      if (clientY < EDGE) dir = -1;
+      else if (clientY > viewportH - EDGE) dir = 1;
+      if (dir !== autoScrollDir) {
+        if (autoScrollTimer) { clearInterval(autoScrollTimer); autoScrollTimer = null; }
+        autoScrollDir = dir;
+        if (dir !== 0) {
+          autoScrollTimer = setInterval(() => {
+            window.scrollBy(0, dir * 12);
+          }, 16);
+        }
+      }
+    }
+    function onHandlePointerUp(ev) {
+      if (!dragging) return;
+      if (activePointerId !== null && ev.pointerId !== activePointerId) return;
+      ev.preventDefault();
+      const body = getScheduleBody();
+      if (!body) { cleanupDragState(); return; }
+      // 実際に <tr> を移動
+      if (insertBefore && insertBefore !== dragging.nextSibling) {
+        body.insertBefore(dragging, insertBefore);
+      } else if (!insertBefore) {
+        // 末尾へ
+        body.appendChild(dragging);
+      }
+      cleanupDragState();
+    }
+
+    function attachDragListeners() {
+      const body = getScheduleBody();
+      if (!body) return;
+      // Pointer Events を使うと mouse/touch/pen を統一的に扱える
+      body.addEventListener('pointerdown', onHandlePointerDown);
+      // pointermove/pointerup は setPointerCapture により対象要素経由で来る
+      // 念のため document でも listen
+      document.addEventListener('pointermove', onHandlePointerMove);
+      document.addEventListener('pointerup', onHandlePointerUp);
+      document.addEventListener('pointercancel', onHandlePointerUp);
+    }
+    function detachDragListeners() {
+      const body = getScheduleBody();
+      if (body) body.removeEventListener('pointerdown', onHandlePointerDown);
+      document.removeEventListener('pointermove', onHandlePointerMove);
+      document.removeEventListener('pointerup', onHandlePointerUp);
+      document.removeEventListener('pointercancel', onHandlePointerUp);
+    }
+
+    // ---- 保存 / キャンセル ----
+    async function saveReorder() {
+      if (!inReorderMode) return;
+      const body = getScheduleBody();
+      if (!body) return;
+      const rows = Array.from(body.querySelectorAll('tr.bar-row'));
+      if (rows.length === 0) {
+        showToast('並び替え対象の現場がありません', 'error');
+        return;
+      }
+      const items = rows.map((tr, idx) => ({
+        id: tr.getAttribute('data-site-id'),
+        sortOrder: (idx + 1) * 10,
+        siteNo: idx + 1
+      })).filter(it => !!it.id);
+
+      // 表示中の現場だけが並び順に含まれる。仕様上、絞り込みなしの状態でしか
+      // 並び替えモードに入れないので、items は全現場を網羅している。
+      btnSave.disabled = true;
+      btnCancel.disabled = true;
+      try {
+        await apiFetch('/sites/reorder', {
+          method: 'PUT',
+          body: JSON.stringify({ items })
+        });
+        await loadSites();
+        exitReorderMode();
+        updateManagerList();
+        renderSchedule();
+        renderList();
+        renderSummary();
+        showToast('並び順を保存しました');
+      } catch (e) {
+        console.error('reorder save failed', e);
+        showToast('並び順の保存に失敗しました: ' + (e && e.message ? e.message : e), 'error');
+      } finally {
+        btnSave.disabled = false;
+        btnCancel.disabled = false;
+      }
+    }
+    function cancelReorder() {
+      if (!inReorderMode) return;
+      if (snapshotSites) {
+        // スナップショットで sites を復元
+        sites = snapshotSites.map(migrateSite);
+      }
+      exitReorderMode();
+      renderSchedule();
+      renderList();
+      renderSummary();
+      showToast('並び替えをキャンセルしました');
+    }
+
+    // ---- イベント配線 ----
+    btnStart.addEventListener('click', () => {
+      enterReorderMode();
+    });
+    btnSave.addEventListener('click', saveReorder);
+    btnCancel.addEventListener('click', cancelReorder);
+
+    // 絞り込みが変更された時にモード中なら自動でキャンセル
+    // (updateFilters が呼ばれる可能性があるので、変更後に filter 有効なら抜ける)
+    const filterIds = ['filterName', 'filterManager', 'filterStructure', 'filterMaterial', 'filterOrder', 'filterAmountMin', 'filterAmountMax'];
+    filterIds.forEach(id => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener('input', () => {
+        if (inReorderMode && isAnyFilterActive()) {
+          cancelReorder();
+          showBlockedMsg();
+        }
+      });
+      el.addEventListener('change', () => {
+        if (inReorderMode && isAnyFilterActive()) {
+          cancelReorder();
+          showBlockedMsg();
+        }
+      });
+    });
+
+    // 絞り込み警告メッセージの中の「絞り込みをクリア」ボタン
+    const inlineClearBtn = document.getElementById('btnClearFiltersInline');
+    if (inlineClearBtn) {
+      inlineClearBtn.addEventListener('click', () => {
+        filterIds.forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+        if (typeof updateFilters === 'function') updateFilters();
+        if (blockedMsg) blockedMsg.style.display = 'none';
+      });
+    }
+  }
+
   //    初期表示が空の白紙だと使い方が分かりづらいため、
   //    端末問わず初回1回だけ共有データとして投入する。
   async function maybeSeedSample() {
@@ -2718,6 +3085,7 @@
     setupFilters();
     setupExport();
     setupNameCellClicks();
+    setupReorderMode();
     updatePrintDateLabels();
 
     // サーバ(D1) から最新データを取得 → 空なら初回サンプル投入

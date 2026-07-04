@@ -223,6 +223,9 @@ type SiteRow = {
   // 既存データには DEFAULT 0 が適用されるため null は返らない想定だが、
   // 旧スキーマでフィールド未存在のケースに備えて optional として扱う。
   subcontract?: number | null
+  // 表示順制御 (migrations/0004_add_sort_order.sql で追加)。
+  // NULL は「まだ並び順が未設定 (旧データ)」を意味し、表示時は末尾扱いにする。
+  sort_order?: number | null
   created_at: string
   updated_at: string
 }
@@ -247,6 +250,8 @@ function rowToSite(r: SiteRow) {
     // 下請: DB上は 0/1 で保持、フロントには boolean で返す。
     // 未マイグレーション環境 (subcontract カラム未追加) の場合は null/undefined になり、false 扱い。
     subcontract: !!(r.subcontract === 1 || r.subcontract === true),
+    // 表示順。未マイグレーション/未設定の行は null のままフロントに返す(フロント側でフォールバック)。
+    sortOrder: (r.sort_order === null || r.sort_order === undefined) ? null : Number(r.sort_order),
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   }
@@ -408,26 +413,169 @@ function sanitizeSiteInput(b: any) {
   }
 }
 
-// 一覧取得: No順 (NULL は末尾、同 No は created_at 古い順)
+// 一覧取得: sort_order 昇順 (NULL は末尾、同値は site_no → created_at で安定表示)
 // 各 site に parts: [...] を合流させて返す。部位なしの現場は parts: [] になる。
 app.get('/api/sites', async (c) => {
   try {
-    const { results } = await c.env.DB.prepare(
-      `SELECT id, site_no, name, manager, structure, quantity, material,
-              order_status, start_date, end_date, amount, memo, subcontract,
-              created_at, updated_at
-       FROM sites
-       ORDER BY
-         CASE WHEN site_no IS NULL THEN 1 ELSE 0 END ASC,
-         site_no ASC,
-         created_at ASC`
-    ).all<SiteRow>()
-    const rows = results || []
+    // sort_order カラムがない (0004 マイグレーション未適用) 環境でもフォールバックできるよう、
+    // まず sort_order 込みで SELECT を試み、失敗したら旧カラムのみで SELECT する。
+    let rows: SiteRow[] = []
+    try {
+      const { results } = await c.env.DB.prepare(
+        `SELECT id, site_no, name, manager, structure, quantity, material,
+                order_status, start_date, end_date, amount, memo, subcontract,
+                sort_order,
+                created_at, updated_at
+         FROM sites
+         ORDER BY
+           CASE WHEN sort_order IS NULL THEN 1 ELSE 0 END ASC,
+           sort_order ASC,
+           CASE WHEN site_no IS NULL THEN 1 ELSE 0 END ASC,
+           site_no ASC,
+           created_at ASC`
+      ).all<SiteRow>()
+      rows = results || []
+    } catch (_) {
+      // sort_order カラムがまだない環境: 旧クエリで取得
+      const { results } = await c.env.DB.prepare(
+        `SELECT id, site_no, name, manager, structure, quantity, material,
+                order_status, start_date, end_date, amount, memo, subcontract,
+                created_at, updated_at
+         FROM sites
+         ORDER BY
+           CASE WHEN site_no IS NULL THEN 1 ELSE 0 END ASC,
+           site_no ASC,
+           created_at ASC`
+      ).all<SiteRow>()
+      rows = results || []
+    }
     const sitesArr = rows.map(rowToSite)
     // 部位データを一括取得して結合
     const partsMap = await fetchPartsBySiteIds(c.env.DB, sitesArr.map(s => s.id))
     sitesArr.forEach((s: any) => { s.parts = partsMap[s.id] || [] })
     return c.json({ ok: true, sites: sitesArr })
+  } catch (e: any) {
+    return c.json({ ok: false, error: String(e && e.message || e) }, 500)
+  }
+})
+
+// ------------------------------------------------------------
+// 並び替え保存 API: PUT /api/sites/reorder
+// ------------------------------------------------------------
+// リクエスト:
+//   { items: [{ id: string, sortOrder: number, siteNo: number }, ...] }
+//
+// 仕様:
+//   - items の全レコードに対して sites.sort_order と site_no を一括更新する。
+//   - すべての UPDATE 文を D1 の batch() に入れて一括実行し、部分失敗を防ぐ。
+//     (Cloudflare D1 の batch は各 statement を単一トランザクション相当で実行する)
+//   - 更新対象の id が sites に存在しない場合はスキップ (安全のため)。
+//   - 更新後は最新の一覧を返す (フロントで即時反映できるようにする)。
+//
+// 権限モデル:
+//   - このエンドポイントを含む /api/* 全体は、上流ミドルウェア (app.use('*', ...))
+//     で セッションクッキー (murata_session, HMAC-SHA256 署名付き) の検証を
+//     必ず通過している。未ログインのクライアントは 401 で弾かれる。
+//   - 加えて X-User-Role ヘッダを見て 'viewer' の場合は 403 で拒否する。
+//     これはフロント UI で管理者/閲覧者を切り替えている運用に合わせた
+//     二次的な UI ガードであり、書き換え可能な自称ヘッダに「依存」させない。
+//     すなわち、既存のセッション認証を通過していなければ、そもそもここに到達しない。
+//
+// 注意:
+//   - このエンドポイントは動的パラメータ /:id とパスが衝突するため、
+//     /api/sites/:id より前に登録する必要がある。
+app.put('/api/sites/reorder', async (c) => {
+  try {
+    // 一次認証: セッションクッキー (murata_session) の検証。
+    // 上流ミドルウェアで既に検証済みだが、多層防御のためここでも明示的に確認する。
+    if (!(await isAuthenticated(c))) {
+      return c.json({ ok: false, error: 'unauthorized' }, 401)
+    }
+    // 二次認証: 自称ロールヘッダは UI ガードとしてのみ使用する。
+    // 'viewer' 明示なら拒否 (フロント誤操作の抑止)。それ以外はセッション認証を信頼する。
+    const role = c.req.header('X-User-Role') || c.req.header('x-user-role') || ''
+    if (role === 'viewer') {
+      return c.json({ ok: false, error: 'forbidden: viewer cannot reorder' }, 403)
+    }
+
+    const body = await c.req.json().catch(() => ({}))
+    const items = Array.isArray(body && body.items) ? body.items : []
+    if (items.length === 0) {
+      return c.json({ ok: false, error: 'items が空です' }, 400)
+    }
+
+    // 更新対象 id の存在確認 (存在しないものは無視)
+    const idList: string[] = items
+      .map((it: any) => (it && typeof it.id === 'string') ? it.id : null)
+      .filter((v: any): v is string => !!v)
+    if (idList.length === 0) {
+      return c.json({ ok: false, error: 'id が指定されていません' }, 400)
+    }
+
+    // 一度に走らせられる placeholder 数の限界を避けるため、id は最大 500 件に制限。
+    // 現実的な現場数 (数十〜数百件) には十分。
+    if (idList.length > 500) {
+      return c.json({ ok: false, error: 'items が多すぎます (上限 500)' }, 400)
+    }
+
+    // 現在存在する id セットを取得
+    const placeholder = idList.map(() => '?').join(',')
+    const { results: existRows } = await c.env.DB.prepare(
+      `SELECT id FROM sites WHERE id IN (${placeholder})`
+    ).bind(...idList).all<{ id: string }>()
+    const existSet = new Set((existRows || []).map(r => r.id))
+
+    // 一括更新 statement を組み立て (存在するものだけ更新する)
+    const now = new Date().toISOString()
+    const stmts: D1PreparedStatement[] = []
+    for (const it of items) {
+      if (!it || typeof it.id !== 'string') continue
+      if (!existSet.has(it.id)) continue
+      const sortOrder = Number(it.sortOrder)
+      const siteNo = Number(it.siteNo)
+      if (!Number.isFinite(sortOrder)) continue
+      // siteNo は「並び替え時に自動採番された連番」を保存する。数値でない場合は現状維持 (site_no は更新しない)
+      if (Number.isFinite(siteNo)) {
+        stmts.push(
+          c.env.DB.prepare(
+            `UPDATE sites SET sort_order = ?, site_no = ?, updated_at = ? WHERE id = ?`
+          ).bind(sortOrder, siteNo, now, it.id)
+        )
+      } else {
+        stmts.push(
+          c.env.DB.prepare(
+            `UPDATE sites SET sort_order = ?, updated_at = ? WHERE id = ?`
+          ).bind(sortOrder, now, it.id)
+        )
+      }
+    }
+
+    if (stmts.length === 0) {
+      return c.json({ ok: false, error: '更新対象が見つかりませんでした' }, 400)
+    }
+
+    // D1 の batch() で一括実行 (部分失敗を防ぐ)
+    await c.env.DB.batch(stmts)
+
+    // 更新後の一覧を返す (フロントで即時反映できるように)
+    const { results: freshRows } = await c.env.DB.prepare(
+      `SELECT id, site_no, name, manager, structure, quantity, material,
+              order_status, start_date, end_date, amount, memo, subcontract,
+              sort_order,
+              created_at, updated_at
+       FROM sites
+       ORDER BY
+         CASE WHEN sort_order IS NULL THEN 1 ELSE 0 END ASC,
+         sort_order ASC,
+         CASE WHEN site_no IS NULL THEN 1 ELSE 0 END ASC,
+         site_no ASC,
+         created_at ASC`
+    ).all<SiteRow>()
+    const sitesArr = (freshRows || []).map(rowToSite)
+    const partsMap = await fetchPartsBySiteIds(c.env.DB, sitesArr.map(s => s.id))
+    sitesArr.forEach((s: any) => { s.parts = partsMap[s.id] || [] })
+
+    return c.json({ ok: true, updated: stmts.length, sites: sitesArr })
   } catch (e: any) {
     return c.json({ ok: false, error: String(e && e.message || e) }, 500)
   }
@@ -454,17 +602,46 @@ app.post('/api/sites', async (c) => {
     // id はフロント発番(uid) を尊重、無ければサーバ生成
     const id = (body && typeof body.id === 'string' && body.id) || ('s_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8))
     const now = new Date().toISOString()
-    await c.env.DB.prepare(
-      `INSERT INTO sites
-        (id, site_no, name, manager, structure, quantity, material,
-         order_status, start_date, end_date, amount, memo, subcontract,
-         created_at, updated_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
-    ).bind(
-      id, v.site_no, v.name, v.manager, v.structure, v.quantity, v.material,
-      v.order_status, v.start_date, v.end_date, v.amount, v.memo, v.subcontract,
-      now, now
-    ).run()
+    // 新規登録は sort_order を末尾に自動割当てする (現在の MAX + 10)。
+    // sort_order カラム未存在の環境では try/catch で無害にフォールバックする。
+    let nextSortOrder = 10
+    try {
+      const r = await c.env.DB.prepare(
+        `SELECT COALESCE(MAX(sort_order), 0) AS max_so FROM sites`
+      ).first<{ max_so: number }>()
+      nextSortOrder = (Number(r?.max_so) || 0) + 10
+    } catch (_) {
+      // sort_order カラムがない古い環境ではフォールバック
+      nextSortOrder = 10
+    }
+    // sort_order カラムを含めた INSERT を試み、失敗したら旧 INSERT にフォールバックする
+    try {
+      await c.env.DB.prepare(
+        `INSERT INTO sites
+          (id, site_no, name, manager, structure, quantity, material,
+           order_status, start_date, end_date, amount, memo, subcontract,
+           sort_order,
+           created_at, updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+      ).bind(
+        id, v.site_no, v.name, v.manager, v.structure, v.quantity, v.material,
+        v.order_status, v.start_date, v.end_date, v.amount, v.memo, v.subcontract,
+        nextSortOrder,
+        now, now
+      ).run()
+    } catch (_) {
+      await c.env.DB.prepare(
+        `INSERT INTO sites
+          (id, site_no, name, manager, structure, quantity, material,
+           order_status, start_date, end_date, amount, memo, subcontract,
+           created_at, updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+      ).bind(
+        id, v.site_no, v.name, v.manager, v.structure, v.quantity, v.material,
+        v.order_status, v.start_date, v.end_date, v.amount, v.memo, v.subcontract,
+        now, now
+      ).run()
+    }
     // 部位を保存(0件なら何もしない)
     const parts = sanitizePartsInput(body && body.parts)
     if (parts.length > 0) {
@@ -645,13 +822,50 @@ app.get('/', (c) => {
               <button id="btnRangeNext" class="btn btn-text" title="1ヶ月後へ"><i class="fas fa-chevron-right"></i></button>
               <button id="btnRangeToday" class="btn btn-text" title="今月を開始月に">今月</button>
               <span id="rangeLabel" class="range-label"></span>
-              <button id="btnPrint" class="btn btn-secondary" title="ブラウザの印刷ダイアログ">
+              {/*
+                現場並び替えモード関連ボタン。
+                - #btnReorderStart: 通常時に表示 (admin のみ)、押すと並び替えモードに入る。
+                - #btnReorderSave / #btnReorderCancel: 並び替えモード中のみ表示。
+                CSS で body.reorder-mode の有無により表示/非表示を切り替える。
+                「並び替えモード関連は印刷・PDF に出さない」ため no-print を継承する
+                (親の .panel-header に no-print が付いている)。
+              */}
+              <button id="btnReorderStart" class="btn btn-secondary reorder-ui reorder-ui-normal admin-only" title="現場行をドラッグ&ドロップで並び替える">
+                <i class="fas fa-arrows-up-down"></i> 現場並び替え
+              </button>
+              <button id="btnReorderSave" class="btn btn-primary reorder-ui reorder-ui-active">
+                <i class="fas fa-check"></i> 並び替えを保存
+              </button>
+              <button id="btnReorderCancel" class="btn btn-secondary reorder-ui reorder-ui-active">
+                <i class="fas fa-times"></i> キャンセル
+              </button>
+              <button id="btnPrint" class="btn btn-secondary reorder-ui-normal" title="ブラウザの印刷ダイアログ">
                 <i class="fas fa-print"></i> 印刷
               </button>
-              <button id="btnPdf" class="btn btn-primary" title="PDFファイルを直接ダウンロード">
+              <button id="btnPdf" class="btn btn-primary reorder-ui-normal" title="PDFファイルを直接ダウンロード">
                 <i class="fas fa-file-pdf"></i> 工程表PDFダウンロード
               </button>
             </div>
+          </div>
+
+          {/*
+            並び替え不可メッセージ:
+            絞り込みが有効な状態で「現場並び替え」を押した場合や、
+            並び替えモード中に絞り込みが変更された場合に表示する。
+            通常時は非表示 (JS で display 制御)。
+          */}
+          <div id="reorderBlockedMsg" class="reorder-blocked-msg no-print" style="display:none">
+            <i class="fas fa-exclamation-triangle"></i>
+            現場の並び替えを行うには、絞り込み条件をクリアしてください。
+            <button id="btnClearFiltersInline" class="btn btn-text btn-sm">絞り込みをクリア</button>
+          </div>
+
+          {/*
+            並び替えモード中のヘルプ表示 (印刷・PDF 出力には含めない)
+          */}
+          <div id="reorderHintMsg" class="reorder-hint-msg no-print reorder-ui-active">
+            <i class="fas fa-info-circle"></i>
+            並び替えモード中：左端の <span class="reorder-hint-handle">☰</span> を上下にドラッグすると行を並び替えできます。保存すると上から順に No が振り直されます。
           </div>
 
           {/* 簡易集計バー */}

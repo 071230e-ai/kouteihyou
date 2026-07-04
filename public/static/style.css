@@ -2337,3 +2337,191 @@ td.col-material-cell {
   margin: 6px 0 0;
   line-height: 1.5;
 }
+
+/* ============================================================
+ * 現場並び替えモード (工程表画面)
+ * ============================================================
+ * 状態:
+ *   通常時          body に .reorder-mode なし
+ *   並び替えモード時  body に .reorder-mode あり
+ *
+ * ボタン切り替え:
+ *   .reorder-ui-normal  = 通常時のみ表示
+ *   .reorder-ui-active  = 並び替えモード中のみ表示
+ * ------------------------------------------------------------ */
+
+/* 既定は通常モード扱い: 並び替えモード専用UIは非表示 */
+.reorder-ui-active { display: none !important; }
+.reorder-ui-normal { display: inline-flex; }
+
+/* 並び替えモード中: 反転 */
+body.reorder-mode .reorder-ui-normal { display: none !important; }
+body.reorder-mode .reorder-ui-active { display: inline-flex !important; }
+
+/* #reorderHintMsg / #reorderBlockedMsg は div なので block 表示に上書き */
+body.reorder-mode #reorderHintMsg.reorder-ui-active { display: flex !important; }
+
+/* ドラッグハンドル列: 通常時は幅ゼロ・非表示、並び替えモード時のみ表示 */
+.schedule-table th.col-drag-handle,
+.schedule-table td.col-drag-handle {
+  display: none;
+  width: 0;
+  padding: 0;
+  border: 0;
+}
+body.reorder-mode .schedule-table th.col-drag-handle,
+body.reorder-mode .schedule-table td.col-drag-handle {
+  display: table-cell;
+  width: 34px;
+  min-width: 34px;
+  max-width: 34px;
+  padding: 4px 2px;
+  text-align: center;
+  vertical-align: middle;
+  background: #f8fafc;
+  border-right: 1px solid #e5e7eb;
+}
+body.reorder-mode .drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  font-size: 18px;
+  color: #64748b;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+  border-radius: 4px;
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  touch-action: none; /* タッチデバイスでのスクロール抑止(ドラッグ優先) */
+}
+body.reorder-mode .drag-handle:hover {
+  background: #eef2ff;
+  color: #1d4ed8;
+  border-color: #93c5fd;
+}
+body.reorder-dragging .drag-handle,
+body.reorder-dragging .drag-handle:hover {
+  cursor: grabbing;
+}
+
+/* ドラッグ中の行 */
+tr.bar-row.dragging-row {
+  opacity: 0.55;
+  outline: 2px dashed #2563eb;
+  outline-offset: -2px;
+  background: #dbeafe !important;
+}
+
+/* 挿入位置ライン(青) - body 直下に absolute で置く */
+.reorder-insertion-line {
+  position: absolute;
+  height: 3px;
+  background: #2563eb;
+  box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.35), 0 2px 6px rgba(37, 99, 235, 0.25);
+  border-radius: 2px;
+  pointer-events: none;
+  z-index: 9999;
+}
+
+/* 並び替えモード中はテキスト選択を抑止(誤選択防止) */
+body.reorder-mode {
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  user-select: none;
+}
+
+/* 並び替えモード中は現場名セルのカーソルを通常表示に戻す(クリック編集を無効化していることを示す) */
+body.reorder-mode .clickable-name-cell {
+  cursor: default !important;
+}
+body.reorder-mode .clickable-name-cell:hover .site-name-text {
+  text-decoration: none !important;
+  color: inherit !important;
+}
+
+/* 絞り込み警告メッセージ */
+.reorder-blocked-msg {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  margin: 8px 0;
+  background: #fef3c7;
+  border: 1px solid #f59e0b;
+  border-radius: 6px;
+  color: #92400e;
+  font-size: 14px;
+  font-weight: 500;
+}
+.reorder-blocked-msg .fa-exclamation-triangle {
+  color: #d97706;
+  font-size: 16px;
+}
+.reorder-blocked-msg .btn-text {
+  margin-left: auto;
+  color: #1d4ed8;
+  background: transparent;
+  border: 1px solid #93c5fd;
+  padding: 4px 10px;
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.reorder-blocked-msg .btn-text:hover {
+  background: #dbeafe;
+}
+
+/* 並び替えモード ヘルプ表示 */
+.reorder-hint-msg {
+  display: none; /* デフォルト非表示。JS で display 制御 */
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  margin: 6px 0;
+  background: #dbeafe;
+  border: 1px solid #93c5fd;
+  border-radius: 6px;
+  color: #1e40af;
+  font-size: 13px;
+}
+.reorder-hint-msg .fa-info-circle {
+  color: #2563eb;
+}
+.reorder-hint-msg .reorder-hint-handle {
+  display: inline-block;
+  padding: 0 6px;
+  background: #ffffff;
+  border: 1px solid #cbd5f5;
+  border-radius: 3px;
+  font-weight: 700;
+  color: #1e3a8a;
+}
+
+/* 印刷時は並び替えUIとハンドル列を完全に隠す。
+   .no-print と reorder-ui-active はすでに print で消えるが、念のため個別にも指定。 */
+@media print {
+  .reorder-ui,
+  .reorder-ui-normal,
+  .reorder-ui-active,
+  #btnReorderStart,
+  #btnReorderSave,
+  #btnReorderCancel,
+  .drag-handle,
+  .col-drag-handle,
+  .reorder-blocked-msg,
+  .reorder-hint-msg,
+  .reorder-insertion-line {
+    display: none !important;
+  }
+  /* 万一 body.reorder-mode が残ったまま印刷されても、
+     並び替え専用の列は完全に潰す */
+  body.reorder-mode .col-drag-handle {
+    display: none !important;
+    width: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+  }
+}
