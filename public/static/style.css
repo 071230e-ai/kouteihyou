@@ -2361,46 +2361,69 @@ body.reorder-mode .reorder-ui-active { display: inline-flex !important; }
 /* #reorderHintMsg / #reorderBlockedMsg は div なので block 表示に上書き */
 body.reorder-mode #reorderHintMsg.reorder-ui-active { display: flex !important; }
 
-/* ドラッグハンドル列: 通常時は幅ゼロ・非表示、並び替えモード時のみ表示 */
+/* ドラッグハンドル列: 通常時は幅ゼロ・非表示、並び替えモード時のみ表示。
+ *
+ * 【重要】<td>/<th> の display 制御はここで完結させる。
+ *   HTML 側の <td class="col-drag-handle"> には reorder-ui-active クラスを付けないこと。
+ *   .reorder-ui-active は display:inline-flex !important を強制するため、
+ *   セル要素に付けるとテーブルセルとして扱われず、
+ *   ハンドル列だけがテーブル外に浮いて大きな左余白の原因になる。
+ * ------------------------------------------------------------ */
 .schedule-table th.col-drag-handle,
 .schedule-table td.col-drag-handle {
   display: none;
   width: 0;
+  min-width: 0;
+  max-width: 0;
   padding: 0;
   border: 0;
 }
 body.reorder-mode .schedule-table th.col-drag-handle,
 body.reorder-mode .schedule-table td.col-drag-handle {
   display: table-cell;
-  width: 34px;
-  min-width: 34px;
-  max-width: 34px;
+  /* 列幅は 44px 固定(仕様 40〜48px 内)。No 列(44px)と揃えて視覚的なリズムを合わせる */
+  width: 44px;
+  min-width: 44px;
+  max-width: 44px;
   padding: 4px 2px;
   text-align: center;
   vertical-align: middle;
-  background: #f8fafc;
-  border-right: 1px solid #e5e7eb;
+  /* 他の固定列(col-info系)と背景・罫線を統一 */
+  background: #f4f6f8;
+  border-right: 1px solid #e1e7ed;
+  border-bottom: 1px solid #e1e7ed;
 }
+/* ヘッダー側は左寄せ罫線を強調(他のヘッダー行と同じ処理) */
+body.reorder-mode .schedule-table thead th.col-drag-handle {
+  border-bottom: 2px solid #1a4a7a;
+  background: #f4f6f8;
+}
+/* ドラッグハンドル本体: <td> の内部で行の上下中央に配置 */
 body.reorder-mode .drag-handle {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
-  font-size: 18px;
+  /* 仕様: 28〜32px 程度 */
+  width: 30px;
+  height: 30px;
+  font-size: 16px;
   color: #64748b;
   cursor: grab;
   user-select: none;
   -webkit-user-select: none;
-  border-radius: 4px;
+  /* 仕様: 角丸 4〜6px、薄いグレー枠 + 白背景、強い影・目立つ色を使わない */
+  border-radius: 5px;
   background: #ffffff;
   border: 1px solid #d1d5db;
+  box-shadow: none;
   touch-action: none; /* タッチデバイスでのスクロール抑止(ドラッグ優先) */
+  transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
 }
 body.reorder-mode .drag-handle:hover {
-  background: #eef2ff;
-  color: #1d4ed8;
-  border-color: #93c5fd;
+  /* 仕様: ホバー時のみ背景を「少しだけ」濃くする(強調しすぎない) */
+  background: #f1f5f9;
+  color: #475569;
+  border-color: #cbd5e1;
 }
 body.reorder-dragging .drag-handle,
 body.reorder-dragging .drag-handle:hover {

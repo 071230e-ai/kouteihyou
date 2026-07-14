@@ -1196,7 +1196,14 @@
     const headRow = document.getElementById('scheduleHeadRow');
     let head = '';
     // 並び替えモード中のみ左端に表示されるドラッグハンドル用の列(通常時は CSS で幅0)
-    head += '<th class="col-drag-handle reorder-ui reorder-ui-active no-print" aria-label="並び替えハンドル"></th>';
+    // ドラッグハンドル列(<th>): 表の第1列として常に存在させる。
+    // 通常時は CSS 側で display:none にして幅ゼロ扱いにする。
+    // 並び替えモード中は body.reorder-mode スコープの CSS ルールで display:table-cell に戻す。
+    // 注意: ここに reorder-ui-active クラスは付けない。
+    //       .reorder-ui-active は display:inline-flex !important を強制するため、
+    //       <th>/<td> に付けるとテーブルセルとして扱われず、
+    //       列がテーブル外に浮いてしまい大きな空白が発生する。
+    head += '<th class="col-drag-handle no-print" aria-label="並び替えハンドル"></th>';
     head += '<th class="col-no col-info">No</th>';
     head += '<th class="col-name col-info">現場名・工事内容</th>';
     head += '<th class="col-manager col-info">担当</th>';
@@ -1239,7 +1246,11 @@
       // 現場行の識別に必ず一意な s.id を使う(No は表示用のみ)
       let row = `<tr class="bar-row" data-site-id="${escapeAttr(s.id)}">`;
       // ドラッグハンドルセル: 通常モードでは非表示(CSS)、並び替えモード時のみ表示
-      row += `<td class="col-drag-handle reorder-ui reorder-ui-active no-print"><span class="drag-handle" role="button" aria-label="ドラッグして並び替え">☰</span></td>`;
+      // ドラッグハンドルセル: 通常モードでは CSS で display:none、並び替えモード時のみ表示。
+      // <td> には reorder-ui-active を付けない(付けると display:inline-flex !important が効いて
+      // テーブルセルとして扱われず、列が浮いて大きな余白の原因になる)。
+      // 表示/非表示は body.reorder-mode スコープの CSS で td.col-drag-handle を切り替えることで行う。
+      row += `<td class="col-drag-handle no-print"><span class="drag-handle" role="button" aria-label="ドラッグして並び替え">☰</span></td>`;
       // No 列: 番号未入力(null/空)の現場は「-」表示。並び順は末尾(compareByNo で保証)。
       const noDisp = (s.siteNo != null && s.siteNo !== '') ? s.siteNo
                    : (s.no != null && s.no !== '') ? s.no : '-';
@@ -1967,15 +1978,15 @@
     html += `</div>`;
 
     // ----- 画面と同じ schedule-table を組む -----
-    // 列幅: No 32 + 番号 44 + 名前 220 + 担当 90 + 構造 100 + 数量 70 + 材料 90 + 金額 120 = 766px
+    // PDF出力では「No」「番号」列は非表示(セル・列幅ごとレイアウトから削除)。
+    // 削除した幅(32 + 44 = 76px)は「現場名・工事内容」列へ加算して 296px に拡張。
+    // 列幅: 名前 296 + 担当 90 + 構造 100 + 数量 70 + 材料 90 + 金額 120 = 766px
     // 月  : 12 * 70 = 840px  ⇒ 合計 1606px (PDF専用エリアは width:1780px に余裕あり)
     html += `<div class="pdf-clone-wrapper">`;
     html += `<table class="schedule-table pdf-clone-schedule">`;
     // colgroup で列幅を固定(PDF描画時に列幅が崩れないよう明示)
     html += `<colgroup>`;
-    html +=   `<col style="width:32px">`;   // No
-    html +=   `<col style="width:44px">`;   // 番号
-    html +=   `<col style="width:220px">`;  // 名前
+    html +=   `<col style="width:296px">`;  // 名前 (旧 220px に No 32 + 番号 44 を加算)
     html +=   `<col style="width:90px">`;   // 担当
     html +=   `<col style="width:100px">`;  // 構造
     html +=   `<col style="width:70px">`;   // 数量
@@ -1984,10 +1995,8 @@
     for (let i = 0; i < 12; i++) html += `<col style="width:70px">`; // 月セル
     html += `</colgroup>`;
 
-    // ヘッダ行
+    // ヘッダ行 (No / 番号 列は PDF では出力しない)
     html += `<thead><tr>`;
-    html +=   `<th class="col-no col-info">No</th>`;
-    html +=   `<th class="col-siteno col-info">番号</th>`;
     html +=   `<th class="col-name col-info">現場名・工事内容</th>`;
     html +=   `<th class="col-manager col-info">担当</th>`;
     html +=   `<th class="col-structure col-info">構造</th>`;
@@ -2005,7 +2014,8 @@
     // ボディ
     html += `<tbody>`;
     if (target.length === 0) {
-      html += `<tr class="empty-row"><td colspan="21" style="text-align:center;padding:30px;color:#6b7a8a;font-size:12px;">表示期間(${escapeHtml(rangeLabel)})に該当する現場がありません。</td></tr>`;
+      // 情報列 6 (名前/担当/構造/数量/材料/金額) + 月 12 = 18 列
+      html += `<tr class="empty-row"><td colspan="18" style="text-align:center;padding:30px;color:#6b7a8a;font-size:12px;">表示期間(${escapeHtml(rangeLabel)})に該当する現場がありません。</td></tr>`;
     } else {
       target.forEach((s, idx) => {
         // バーは画面と同じく computeBarSegment (セル内 % 配置) を使用
@@ -2018,9 +2028,8 @@
         // PDF出力でも左側バッジは下請に関係なく従来どおりの色で表示する
         const tagsCls = `name-tags`;
 
+        // PDF: No / 番号 列は出力しない (現場名・工事内容 を左端に配置)
         let row = '<tr class="bar-row">';
-        row += `<td class="col-no col-info">${idx + 1}</td>`;
-        row += `<td class="col-siteno col-info">${(s.siteNo != null && s.siteNo !== '') ? s.siteNo : ''}</td>`;
         row += `<td class="col-name col-info" title="${escapeAttr(s.name || '')}"><div class="name-cell"><span class="site-name-text">${escapeHtml(s.name || '')}</span><span class="${tagsCls}">${statusTag}${orderTag}</span></div></td>`;
         // 担当・構造は通常テキスト、材料区分のみ丸型バッジ(PDF出力でも同じ表示)
         row += `<td class="col-manager col-info col-plain">${escapeHtml(s.manager || '')}</td>`;
