@@ -1979,20 +1979,34 @@
 
     // ----- 画面と同じ schedule-table を組む -----
     // PDF出力では「No」「番号」列は非表示(セル・列幅ごとレイアウトから削除)。
-    // 削除した幅(32 + 44 = 76px)は「現場名・工事内容」列へ加算して 296px に拡張。
-    // 列幅: 名前 296 + 担当 90 + 構造 100 + 数量 70 + 材料 90 + 金額 120 = 766px
-    // 月  : 12 * 70 = 840px  ⇒ 合計 1606px (PDF専用エリアは width:1780px に余裕あり)
+    //
+    // 【幅の設計】(2026-07 再修正: 実描画で rightGap = 1px 以内を保証)
+    //   .pdf-only-area          幅 1800px
+    //   .pdf-clone-wrapper      margin: 0 12px、border: 2px solid
+    //     → wrapper 内側幅 = 1800 - 24 (margin) - 4 (border) = 1772px
+    //   .pdf-clone-schedule     width: 1772px (wrapper 内側と完全一致)
+    //     → 固定情報 6 列 = 704px
+    //     → 月列 12 個   = 1772 - 704 = 1068px、1 か月 = 89px
+    //
+    //   これで「最終月列の右端 = テーブル右端 = wrapper 内側 = 表右外枠」が
+    //   表示期間に関係なく常に成立する。
+    //   (前回 width:1736px では wrapper 内側との差 36px が右端の空白として残っていた)
+    //
+    //   工程バーは月セル内 % 配置なので月幅変更 (86→89) に自動追従する
+    //   (computeBarSegment のロジックは変更しない)。
     html += `<div class="pdf-clone-wrapper">`;
     html += `<table class="schedule-table pdf-clone-schedule">`;
-    // colgroup で列幅を固定(PDF描画時に列幅が崩れないよう明示)
+    // colgroup で列幅を明示 (table-layout: fixed 前提)
+    // 合計 = 704 (情報 6 列) + 1068 (月 12 列 = 89 × 12) = 1772px (= wrapper 内側)
     html += `<colgroup>`;
-    html +=   `<col style="width:296px">`;  // 名前 (旧 220px に No 32 + 番号 44 を加算)
+    html +=   `<col style="width:234px">`;  // 現場名・工事内容 (指示: 230-240px)
     html +=   `<col style="width:90px">`;   // 担当
     html +=   `<col style="width:100px">`;  // 構造
     html +=   `<col style="width:70px">`;   // 数量
-    html +=   `<col style="width:90px">`;   // 材料
-    html +=   `<col style="width:120px">`;  // 金額
-    for (let i = 0; i < 12; i++) html += `<col style="width:70px">`; // 月セル
+    html +=   `<col style="width:90px">`;   // 材料区分
+    html +=   `<col style="width:120px">`;  // 契約金額
+    // 月列: 1068 ÷ 12 = 89px を 12 列すべてに指定 (整数で割り切れる)
+    for (let i = 0; i < 12; i++) html += `<col style="width:89px">`;
     html += `</colgroup>`;
 
     // ヘッダ行 (No / 番号 列は PDF では出力しない)

@@ -1955,11 +1955,26 @@ td.col-material-cell {
 }
 
 .pdf-only-area .schedule-table.pdf-clone-schedule {
-  width: 1736px;
-  min-width: 1736px;
+  /* 2026-07 再修正: テーブルを wrapper 内側幅 (1772px) に完全一致させる。
+   * 従来 (width:1736px) では wrapper 内側との差 約 36px が右端の空白として残っていた。
+   *
+   * .pdf-only-area          幅 1800px
+   * .pdf-clone-wrapper      margin: 0 12px 12px、border: 2px solid
+   *   → wrapper 外側幅 = 1800 - 24 (margin 左右) = 1776px
+   *   → wrapper 内側幅 = 1776 - 4 (border 左右)  = 1772px
+   *
+   * table を width:1772px に指定して wrapper 内側と完全一致させる。
+   * 固定情報 6 列 = 704px、月 12 列 = 1772 - 704 = 1068px、1 か月 = 89px。
+   * これで「最終月列の右端 = テーブル右端 = wrapper 内側 = 表右外枠」が
+   * 表示期間に関係なく常に成立する。 */
+  width: 1772px;
+  min-width: 1772px;
+  max-width: 1772px;
   table-layout: fixed;
   border-collapse: collapse !important;
   border-spacing: 0 !important;
+  box-sizing: border-box;
+  margin: 0;
   font-size: 12px;
   background: #ffffff;
 }
@@ -2094,9 +2109,16 @@ td.col-material-cell {
   font-size: 12px;
   color: #1a2332;
   line-height: 1.3;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* 現場名列を 234px に縮めたため、長い現場名は「省略」ではなく「自然な折り返し」で表示する。
+   * 省略記号(…) のままだと現場名が判読できなくなる。
+   * - white-space: normal          … 半角スペース・全角スペースで改行
+   * - overflow-wrap: anywhere      … 長い日本語連続文字列も列幅を超えたら改行させる
+   * - word-break: normal           … CJK でも英単語でも自然な位置で折り返す
+   */
+  white-space: normal;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  word-break: normal;
   max-width: 100%;
 }
 .pdf-only-area .schedule-table.pdf-clone-schedule .name-tags {
